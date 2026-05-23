@@ -6,15 +6,17 @@
 import { Redirect } from 'expo-router';
 import { useAuthStore } from '../stores/authStore';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
-import { Colors } from '../lib/theme';
+import { useThemeColor } from '../lib/theme';
 
 export default function Index() {
   const { isAuthenticated, user, isLoading } = useAuthStore();
+  const { colors, accent } = useThemeColor();
+  const styles = getStyles(colors);
 
   if (isLoading) {
     return (
       <View style={styles.container}>
-        <ActivityIndicator size="large" color={Colors.accent.red} />
+        <ActivityIndicator size="large" color={accent.red} />
       </View>
     );
   }
@@ -30,10 +32,10 @@ export default function Index() {
   return <Redirect href="/(tabs)" />;
 }
 
-const styles = StyleSheet.create({
+const getStyles = (colors: any) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.dark.background,
+    backgroundColor: colors.background,
     justifyContent: 'center',
     alignItems: 'center',
   },

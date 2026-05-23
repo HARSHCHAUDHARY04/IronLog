@@ -11,12 +11,22 @@ import {
   StyleSheet,
   RefreshControl,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { 
+  ChevronLeft, ChevronRight, Dumbbell, 
+  ChevronUp, ChevronDown, Clock, Activity, Flame, Crown
+} from 'lucide-react-native';
 import { useFocusEffect } from 'expo-router';
-import { Colors, Spacing, BorderRadius, FontSize, FontWeight } from '../../lib/theme';
+import Animated, { FadeInDown, Layout } from 'react-native-reanimated';
+import { useThemeColor, Spacing, BorderRadius, FontSize, FontWeight, Shadows } from '../../lib/theme';
 import { getWorkouts, getWorkoutDatesForMonth, Workout } from '../../lib/storage';
+import { useSettingsStore } from '../../stores/settingsStore';
+import { LinearGradient } from 'expo-linear-gradient';
 
 export default function HistoryScreen() {
+  const { colors, text, accent, status, muscle, isDark } = useThemeColor();
+  const styles = React.useMemo(() => getStyles(colors, text, accent, status, muscle), [colors, text, accent, status, muscle]);
+  const { isPremium, upgradeToPremium } = useSettingsStore();
+
   const [workouts, setWorkouts] = useState<Workout[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedWorkout, setSelectedWorkout] = useState<Workout | null>(null);
@@ -86,20 +96,20 @@ export default function HistoryScreen() {
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.accent.red} />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={accent.red} />
         }
       >
         <Text style={styles.title}>History</Text>
 
         {/* Calendar Heatmap */}
-        <View style={styles.calendarCard}>
+        <Animated.View entering={FadeInDown.delay(100).springify()} style={styles.calendarCard}>
           <View style={styles.calendarHeader}>
-            <TouchableOpacity onPress={prevMonth}>
-              <Ionicons name="chevron-back" size={24} color={Colors.text.secondary} />
+            <TouchableOpacity onPress={prevMonth} style={styles.navButton}>
+              <ChevronLeft size={20} color={text.secondary} />
             </TouchableOpacity>
             <Text style={styles.calendarMonth}>{monthName}</Text>
-            <TouchableOpacity onPress={nextMonth}>
-              <Ionicons name="chevron-forward" size={24} color={Colors.text.secondary} />
+            <TouchableOpacity onPress={nextMonth} style={styles.navButton}>
+              <ChevronRight size={20} color={text.secondary} />
             </TouchableOpacity>
           </View>
 
@@ -146,104 +156,137 @@ export default function HistoryScreen() {
 
           <View style={styles.calendarLegend}>
             <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: Colors.status.success }]} />
+              <View style={[styles.legendDot, { backgroundColor: status.success }]} />
               <Text style={styles.legendText}>Workout Day</Text>
             </View>
             <Text style={styles.legendCount}>
-              {workoutDates.length} workouts this month
+              {workoutDates.length} workouts
             </Text>
           </View>
-        </View>
+        </Animated.View>
 
         {/* Workout List */}
-        <Text style={styles.sectionTitle}>All Workouts</Text>
+        <Text style={styles.sectionTitle}>Training Log</Text>
 
         {workouts.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Ionicons name="barbell-outline" size={48} color={Colors.text.tertiary} />
+          <Animated.View entering={FadeInDown.delay(200).springify()} style={styles.emptyState}>
+            <Dumbbell size={48} color={text.tertiary} style={{ marginBottom: Spacing.md }} />
             <Text style={styles.emptyText}>No workouts yet</Text>
-            <Text style={styles.emptySubtext}>Start your first workout to see it here!</Text>
-          </View>
+            <Text style={styles.emptySubtext}>Your past workouts will appear here.</Text>
+          </Animated.View>
         ) : (
-          workouts.map((workout) => (
-            <TouchableOpacity
-              key={workout.id}
-              style={styles.workoutCard}
-              onPress={() => setSelectedWorkout(selectedWorkout?.id === workout.id ? null : workout)}
-              activeOpacity={0.8}
-            >
-              <View style={styles.workoutHeader}>
-                <View style={styles.workoutDateBadge}>
-                  <Text style={styles.workoutDateDay}>
-                    {new Date(workout.workout_date).getDate()}
-                  </Text>
-                  <Text style={styles.workoutDateMonth}>
-                    {new Date(workout.workout_date).toLocaleDateString('en-US', { month: 'short' })}
-                  </Text>
-                </View>
-                <View style={styles.workoutInfo}>
-                  <Text style={styles.workoutName}>{workout.name || 'Workout'}</Text>
-                  <View style={styles.workoutMeta}>
-                    <Text style={styles.workoutMetaText}>
-                      ⏱ {formatDuration(workout.duration_minutes)}
-                    </Text>
-                    <Text style={styles.workoutMetaText}>
-                      📊 {formatVolume(workout.total_volume_kg)}
-                    </Text>
-                    <Text style={styles.workoutMetaText}>
-                      💪 {[...new Set(workout.exercises.map(e => e.exercise_name))].length} exercises
-                    </Text>
-                  </View>
-                </View>
-                <Ionicons
-                  name={selectedWorkout?.id === workout.id ? 'chevron-up' : 'chevron-down'}
-                  size={20}
-                  color={Colors.text.tertiary}
-                />
-              </View>
-
-              {/* Muscle group tags */}
-              <View style={styles.muscleGroupRow}>
-                {workout.muscle_groups.slice(0, 4).map(mg => (
-                  <View key={mg} style={styles.muscleTag}>
-                    <Text style={styles.muscleTagText}>{mg}</Text>
-                  </View>
-                ))}
-              </View>
-
-              {/* Expanded detail */}
-              {selectedWorkout?.id === workout.id && (
-                <View style={styles.workoutDetail}>
-                  {[...new Set(workout.exercises.map(e => e.exercise_name))].map(exName => {
-                    const sets = workout.exercises.filter(e => e.exercise_name === exName);
-                    return (
-                      <View key={exName} style={styles.detailExercise}>
-                        <Text style={styles.detailExerciseName}>{exName}</Text>
-                        {sets.map((s, i) => (
-                          <Text key={i} style={styles.detailSet}>
-                            {s.is_warmup ? 'W' : `Set ${s.set_number}`}: {s.weight_kg}kg × {s.reps}
-                            {s.rpe ? ` @RPE${s.rpe}` : ''}
+          (isPremium ? workouts : workouts.slice(0, 5)).map((workout, index) => (
+            <Animated.View key={workout.id} layout={Layout.springify()}>
+              <Animated.View 
+                entering={FadeInDown.delay(200 + index * 50).springify()}
+              >
+                <TouchableOpacity
+                  style={styles.workoutCard}
+                  onPress={() => setSelectedWorkout(selectedWorkout?.id === workout.id ? null : workout)}
+                  activeOpacity={0.9}
+                >
+                  <View style={styles.workoutHeader}>
+                    <View style={styles.workoutDateBadge}>
+                      <Text style={styles.workoutDateDay}>
+                        {new Date(workout.workout_date).getDate()}
+                      </Text>
+                      <Text style={styles.workoutDateMonth}>
+                        {new Date(workout.workout_date).toLocaleDateString('en-US', { month: 'short' })}
+                      </Text>
+                    </View>
+                    <View style={styles.workoutInfo}>
+                      <Text style={styles.workoutName}>{workout.name || 'Workout'}</Text>
+                      <View style={styles.workoutMeta}>
+                        <View style={styles.workoutMetaItem}>
+                          <Clock size={12} color={text.tertiary} />
+                          <Text style={styles.workoutMetaText}>{formatDuration(workout.duration_minutes)}</Text>
+                        </View>
+                        <View style={styles.workoutMetaItem}>
+                          <Activity size={12} color={text.tertiary} />
+                          <Text style={styles.workoutMetaText}>{formatVolume(workout.total_volume_kg)}</Text>
+                        </View>
+                        <View style={styles.workoutMetaItem}>
+                          <Dumbbell size={12} color={text.tertiary} />
+                          <Text style={styles.workoutMetaText}>
+                            {[...new Set(workout.exercises.map(e => e.exercise_name))].length}
                           </Text>
-                        ))}
+                        </View>
                       </View>
-                    );
-                  })}
-                </View>
-              )}
-            </TouchableOpacity>
+                    </View>
+                    {selectedWorkout?.id === workout.id ? (
+                      <ChevronUp size={20} color={text.tertiary} />
+                    ) : (
+                      <ChevronDown size={20} color={text.tertiary} />
+                    )}
+                  </View>
+
+                  {/* Muscle group tags */}
+                  <View style={styles.muscleGroupRow}>
+                    {workout.muscle_groups.slice(0, 4).map(mg => (
+                      <View key={mg} style={styles.muscleTag}>
+                        <Text style={styles.muscleTagText}>{mg}</Text>
+                      </View>
+                    ))}
+                  </View>
+
+                  {/* Expanded detail */}
+                  {selectedWorkout?.id === workout.id && (
+                    <Animated.View entering={FadeInDown.springify()} style={styles.workoutDetail}>
+                      {[...new Set(workout.exercises.map(e => e.exercise_name))].map(exName => {
+                        const sets = workout.exercises.filter(e => e.exercise_name === exName);
+                        return (
+                          <View key={exName} style={styles.detailExercise}>
+                            <Text style={styles.detailExerciseName}>{exName}</Text>
+                            {sets.map((s, i) => (
+                              <View key={i} style={styles.detailSetRow}>
+                                <Text style={styles.detailSetNumber}>
+                                  {s.is_warmup ? 'W' : `Set ${s.set_number}`}
+                                </Text>
+                                <Text style={styles.detailSetValues}>
+                                  {s.weight_kg} kg × {s.reps}
+                                  {s.rpe ? `  @RPE${s.rpe}` : ''}
+                                </Text>
+                              </View>
+                            ))}
+                          </View>
+                        );
+                      })}
+                    </Animated.View>
+                  )}
+                </TouchableOpacity>
+              </Animated.View>
+            </Animated.View>
           ))
         )}
 
-        <View style={{ height: 40 }} />
+        {!isPremium && workouts.length > 5 && (
+          <Animated.View entering={FadeInDown.delay(300).springify()} style={styles.paywallCard}>
+            <LinearGradient
+              colors={[colors.surfaceElevated, colors.surface]}
+              style={styles.paywallGradient}
+            >
+              <Crown size={48} color="#FFD700" style={{ marginBottom: Spacing.md }} />
+              <Text style={styles.paywallTitle}>Unlock Unlimited History</Text>
+              <Text style={styles.paywallText}>
+                Free tier is limited to your last 5 workouts. Go premium to store, review, and search your entire lifetime training history.
+              </Text>
+              <TouchableOpacity style={styles.paywallButton} onPress={() => upgradeToPremium()}>
+                <Text style={styles.paywallButtonText}>Go Premium for ₹199</Text>
+              </TouchableOpacity>
+            </LinearGradient>
+          </Animated.View>
+        )}
+
+        <View style={{ height: 100 }} />
       </ScrollView>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.dark.background,
+    backgroundColor: colors.background,
   },
   scrollView: { flex: 1 },
   content: {
@@ -251,20 +294,22 @@ const styles = StyleSheet.create({
     paddingTop: 60,
   },
   title: {
-    color: Colors.text.primary,
+    color: text.primary,
     fontSize: FontSize['3xl'],
     fontWeight: FontWeight.extrabold,
     marginBottom: Spacing['2xl'],
+    letterSpacing: -0.5,
   },
 
   // Calendar
   calendarCard: {
-    backgroundColor: Colors.dark.surface,
+    backgroundColor: colors.surfaceElevated,
     borderRadius: BorderRadius.xl,
-    padding: Spacing.lg,
+    padding: Spacing.xl,
     marginBottom: Spacing['2xl'],
     borderWidth: 1,
-    borderColor: Colors.dark.border,
+    borderColor: colors.border,
+    ...Shadows.md,
   },
   calendarHeader: {
     flexDirection: 'row',
@@ -273,18 +318,23 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.lg,
   },
   calendarMonth: {
-    color: Colors.text.primary,
+    color: text.primary,
     fontSize: FontSize.lg,
-    fontWeight: FontWeight.bold,
+    fontWeight: FontWeight.extrabold,
+  },
+  navButton: {
+    padding: Spacing.xs,
+    backgroundColor: colors.surfaceHighlight,
+    borderRadius: BorderRadius.sm,
   },
   calendarDays: {
     flexDirection: 'row',
-    marginBottom: Spacing.sm,
+    marginBottom: Spacing.md,
   },
   calendarDayLabel: {
     flex: 1,
     textAlign: 'center',
-    color: Colors.text.tertiary,
+    color: text.tertiary,
     fontSize: FontSize.xs,
     fontWeight: FontWeight.bold,
   },
@@ -300,45 +350,46 @@ const styles = StyleSheet.create({
     padding: 2,
   },
   calendarDayCircle: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     alignItems: 'center',
     justifyContent: 'center',
   },
   calendarDayActive: {
-    backgroundColor: Colors.status.success,
+    backgroundColor: status.success,
+    ...Shadows.glow(status.success),
   },
   calendarDayToday: {
     borderWidth: 2,
-    borderColor: Colors.accent.red,
+    borderColor: accent.red,
   },
   calendarDayText: {
-    color: Colors.text.secondary,
+    color: text.secondary,
     fontSize: FontSize.sm,
     fontWeight: FontWeight.medium,
   },
   calendarDayTextActive: {
-    color: '#fff',
-    fontWeight: FontWeight.bold,
+    color: colors.background,
+    fontWeight: FontWeight.extrabold,
   },
   calendarDayTextToday: {
-    color: Colors.accent.red,
+    color: accent.red,
     fontWeight: FontWeight.bold,
   },
   calendarLegend: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: Spacing.md,
+    marginTop: Spacing.lg,
     paddingTop: Spacing.md,
     borderTopWidth: 1,
-    borderTopColor: Colors.dark.border,
+    borderTopColor: colors.border,
   },
   legendItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.xs,
+    gap: Spacing.sm,
   },
   legendDot: {
     width: 10,
@@ -346,18 +397,19 @@ const styles = StyleSheet.create({
     borderRadius: 5,
   },
   legendText: {
-    color: Colors.text.tertiary,
+    color: text.secondary,
     fontSize: FontSize.xs,
+    fontWeight: FontWeight.medium,
   },
   legendCount: {
-    color: Colors.text.secondary,
-    fontSize: FontSize.xs,
-    fontWeight: FontWeight.semibold,
+    color: text.primary,
+    fontSize: FontSize.sm,
+    fontWeight: FontWeight.bold,
   },
 
   // Section
   sectionTitle: {
-    color: Colors.text.secondary,
+    color: text.secondary,
     fontSize: FontSize.sm,
     fontWeight: FontWeight.bold,
     textTransform: 'uppercase',
@@ -367,112 +419,181 @@ const styles = StyleSheet.create({
 
   // Workout card
   workoutCard: {
-    backgroundColor: Colors.dark.surface,
+    backgroundColor: colors.surfaceElevated,
     borderRadius: BorderRadius.xl,
-    padding: Spacing.md,
-    marginBottom: Spacing.sm,
+    padding: Spacing.lg,
+    marginBottom: Spacing.md,
     borderWidth: 1,
-    borderColor: Colors.dark.border,
+    borderColor: colors.border,
+    ...Shadows.sm,
   },
   workoutHeader: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   workoutDateBadge: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: Colors.dark.surfaceHighlight,
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: colors.surfaceHighlight,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: Spacing.md,
   },
   workoutDateDay: {
-    color: Colors.text.primary,
-    fontSize: FontSize.lg,
+    color: text.primary,
+    fontSize: FontSize.xl,
     fontWeight: FontWeight.extrabold,
-    lineHeight: 20,
+    lineHeight: 22,
   },
   workoutDateMonth: {
-    color: Colors.text.tertiary,
+    color: text.tertiary,
     fontSize: FontSize.xs,
-    fontWeight: FontWeight.medium,
+    fontWeight: FontWeight.bold,
     textTransform: 'uppercase',
-    lineHeight: 14,
+    letterSpacing: 0.5,
   },
   workoutInfo: {
     flex: 1,
   },
   workoutName: {
-    color: Colors.text.primary,
+    color: text.primary,
     fontSize: FontSize.md,
     fontWeight: FontWeight.bold,
   },
   workoutMeta: {
     flexDirection: 'row',
+    alignItems: 'center',
     gap: Spacing.md,
-    marginTop: 4,
+    marginTop: 6,
+  },
+  workoutMetaItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
   workoutMetaText: {
-    color: Colors.text.tertiary,
+    color: text.secondary,
     fontSize: FontSize.xs,
+    fontWeight: FontWeight.medium,
   },
   muscleGroupRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: Spacing.xs,
-    marginTop: Spacing.sm,
-    marginLeft: 56,
+    marginTop: Spacing.md,
+    marginLeft: 64, // Aligns under the text, not the badge
   },
   muscleTag: {
-    backgroundColor: Colors.dark.surfaceHighlight,
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: 2,
+    backgroundColor: colors.surfaceHighlight,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 4,
     borderRadius: BorderRadius.full,
   },
   muscleTagText: {
-    color: Colors.text.secondary,
-    fontSize: FontSize.xs,
-    textTransform: 'capitalize',
+    color: text.secondary,
+    fontSize: 10,
+    fontWeight: FontWeight.bold,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
 
   // Detail
   workoutDetail: {
-    marginTop: Spacing.md,
-    paddingTop: Spacing.md,
+    marginTop: Spacing.lg,
+    paddingTop: Spacing.lg,
     borderTopWidth: 1,
-    borderTopColor: Colors.dark.border,
+    borderTopColor: colors.border,
+    marginLeft: 64,
   },
   detailExercise: {
     marginBottom: Spacing.md,
   },
   detailExerciseName: {
-    color: Colors.accent.red,
-    fontSize: FontSize.md,
-    fontWeight: FontWeight.semibold,
-    marginBottom: Spacing.xs,
-  },
-  detailSet: {
-    color: Colors.text.secondary,
+    color: accent.red,
     fontSize: FontSize.sm,
-    marginLeft: Spacing.lg,
-    lineHeight: 20,
+    fontWeight: FontWeight.bold,
+    marginBottom: Spacing.sm,
+  },
+  detailSetRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  detailSetNumber: {
+    width: 40,
+    color: text.tertiary,
+    fontSize: FontSize.sm,
+    fontWeight: FontWeight.semibold,
+  },
+  detailSetValues: {
+    color: text.secondary,
+    fontSize: FontSize.sm,
+    fontWeight: FontWeight.medium,
   },
 
   // Empty state
   emptyState: {
     alignItems: 'center',
     paddingVertical: Spacing['4xl'],
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: BorderRadius.xl,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   emptyText: {
-    color: Colors.text.primary,
-    fontSize: FontSize.xl,
+    color: text.primary,
+    fontSize: FontSize.lg,
     fontWeight: FontWeight.bold,
-    marginTop: Spacing.md,
   },
   emptySubtext: {
-    color: Colors.text.tertiary,
-    fontSize: FontSize.md,
+    color: text.tertiary,
+    fontSize: FontSize.sm,
     marginTop: Spacing.xs,
+  },
+
+  // Paywall
+  paywallCard: {
+    marginTop: Spacing.lg,
+    marginBottom: Spacing.lg,
+    borderRadius: BorderRadius.xl,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...Shadows.lg,
+  },
+  paywallGradient: {
+    padding: Spacing.xl,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  paywallTitle: {
+    color: text.primary,
+    fontSize: FontSize.xl,
+    fontWeight: FontWeight.bold,
+    textAlign: 'center',
+    marginBottom: Spacing.sm,
+  },
+  paywallText: {
+    color: text.secondary,
+    fontSize: FontSize.md,
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: Spacing.xl,
+    paddingHorizontal: Spacing.md,
+  },
+  paywallButton: {
+    backgroundColor: accent.red,
+    borderRadius: BorderRadius.xl,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.xl,
+    width: '100%',
+    alignItems: 'center',
+    ...Shadows.md,
+  },
+  paywallButtonText: {
+    color: '#fff',
+    fontSize: FontSize.md,
+    fontWeight: FontWeight.bold,
   },
 });

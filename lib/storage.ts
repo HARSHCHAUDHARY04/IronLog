@@ -25,6 +25,12 @@ export interface User {
   height_cm?: number;
   goal: 'strength' | 'hypertrophy' | 'weight_loss' | 'endurance' | 'general_fitness';
   onboarding_completed: boolean;
+  xp: number;
+  level: number;
+  current_streak: number;
+  highest_streak: number;
+  total_workouts: number;
+  badges: string[];
   created_at: string;
 }
 
@@ -106,6 +112,7 @@ const KEYS = {
   TEMPLATES: 'ironlog_templates',
   PROGRESS: 'ironlog_progress',
   PRS: 'ironlog_prs',
+  CUSTOM_EXERCISES: 'ironlog_custom_exercises',
 };
 
 // ───────────────────────────────────────────────────────
@@ -128,6 +135,12 @@ export async function saveUser(user: Partial<User>): Promise<User> {
     height_cm: user.height_cm ?? existing?.height_cm,
     goal: user.goal || existing?.goal || 'general_fitness',
     onboarding_completed: user.onboarding_completed ?? existing?.onboarding_completed ?? false,
+    xp: user.xp ?? existing?.xp ?? 0,
+    level: user.level ?? existing?.level ?? 1,
+    current_streak: user.current_streak ?? existing?.current_streak ?? 0,
+    highest_streak: user.highest_streak ?? existing?.highest_streak ?? 0,
+    total_workouts: user.total_workouts ?? existing?.total_workouts ?? 0,
+    badges: user.badges ?? existing?.badges ?? [],
     created_at: existing?.created_at || new Date().toISOString(),
   };
   await AsyncStorage.setItem(KEYS.USER, JSON.stringify(updated));
@@ -216,6 +229,7 @@ export async function getWorkoutStats(): Promise<{
   totalVolume: number;
   thisWeekVolume: number;
   lastWeekVolume: number;
+  thisWeekWorkouts: number;
 }> {
   const workouts = await getWorkouts();
   const now = new Date();
@@ -227,6 +241,7 @@ export async function getWorkoutStats(): Promise<{
   startOfLastWeek.setDate(startOfLastWeek.getDate() - 7);
 
   const thisMonthWorkouts = workouts.filter(w => new Date(w.workout_date) >= startOfMonth).length;
+  const thisWeekWorkouts = workouts.filter(w => new Date(w.workout_date) >= startOfWeek).length;
   const thisWeekVolume = workouts
     .filter(w => new Date(w.workout_date) >= startOfWeek)
     .reduce((sum, w) => sum + w.total_volume_kg, 0);
@@ -288,6 +303,7 @@ export async function getWorkoutStats(): Promise<{
     totalVolume: workouts.reduce((sum, w) => sum + w.total_volume_kg, 0),
     thisWeekVolume: Math.round(thisWeekVolume),
     lastWeekVolume: Math.round(lastWeekVolume),
+    thisWeekWorkouts,
   };
 }
 
@@ -474,8 +490,16 @@ export async function saveTemplate(template: Omit<WorkoutTemplate, 'id'>): Promi
 // ───────────────────────────────────────────────────────
 
 export async function seedDemoData(): Promise<void> {
-  const user = await getUser();
-  if (!user) return;
+  let user = await getUser();
+  if (!user) {
+    user = await saveUser({
+      name: 'Demo Athlete',
+      email: 'demo@ironlog.app',
+      onboarding_completed: true,
+      xp: 0,
+      level: 1,
+    });
+  }
 
   // Generate 30 days of workout data
   const exercises = [
@@ -500,6 +524,7 @@ export async function seedDemoData(): Promise<void> {
 
   for (let day = 30; day >= 0; day -= 2) {
     const workoutDate = new Date(today);
+    dateStrStr: // dummy for local scope
     workoutDate.setDate(today.getDate() - day);
     const dateStr = workoutDate.toISOString().split('T')[0];
 
@@ -598,10 +623,56 @@ export async function seedDemoData(): Promise<void> {
   }
 
   await AsyncStorage.setItem(KEYS.PROGRESS, JSON.stringify(progressEntries));
+
+  // Calculate and update user stats in storage to match the seeded demo data
+  const workoutsTotalVolume = workouts.reduce((sum, w) => sum + w.total_volume_kg, 0);
+  const xpEarned = Math.round(workoutsTotalVolume / 100) + 15 * workouts.length;
+  const newLevel = Math.floor(Math.sqrt(xpEarned / 100)) + 1;
+
+  await saveUser({
+    total_workouts: workouts.length,
+    current_streak: 3,
+    highest_streak: 5,
+    xp: xpEarned,
+    level: newLevel,
+    badges: ['first_workout', 'dedicated_10'],
+  });
 }
 
 // Clear all data
 export async function clearAllData(): Promise<void> {
-  const keys = [KEYS.USER, KEYS.WORKOUTS, KEYS.TEMPLATES, KEYS.PROGRESS, KEYS.PRS];
+  const keys = [
+    KEYS.USER,
+    KEYS.WORKOUTS,
+    KEYS.TEMPLATES,
+    KEYS.PROGRESS,
+    KEYS.PRS,
+    KEYS.CUSTOM_EXERCISES,
+  ];
   await Promise.all(keys.map(key => AsyncStorage.removeItem(key)));
+}
+
+// ───────────────────────────────────────────────────────
+// Custom Exercises Operations
+// ───────────────────────────────────────────────────────
+
+export async function getCustomExercises(): Promise<ExerciseLibraryItem[]> {
+  try {
+    const data = await AsyncStorage.getItem(KEYS.CUSTOM_EXERCISES);
+    return data ? JSON.parse(data) : [];
+  } catch (error) {
+    console.error('Error fetching custom exercises:', error);
+    return [];
+  }
+}
+
+export async function saveCustomExercise(exercise: Omit<ExerciseLibraryItem, 'id'>): Promise<ExerciseLibraryItem> {
+  const customExercises = await getCustomExercises();
+  const newExercise: ExerciseLibraryItem = {
+    ...exercise,
+    id: 'custom-' + generateId(),
+  };
+  customExercises.push(newExercise);
+  await AsyncStorage.setItem(KEYS.CUSTOM_EXERCISES, JSON.stringify(customExercises));
+  return newExercise;
 }

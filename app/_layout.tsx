@@ -1,37 +1,28 @@
-import { DarkTheme, ThemeProvider } from 'expo-router';
+import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { useAuthStore } from '../stores/authStore';
-import { Colors } from '../lib/theme';
+import { useSettingsStore } from '../stores/settingsStore';
+import { Colors, useThemeColor } from '../lib/theme';
 
 // Prevent splash screen from auto-hiding
 SplashScreen.preventAutoHideAsync();
 
-const IronLogDarkTheme = {
-  ...DarkTheme,
-  colors: {
-    ...DarkTheme.colors,
-    primary: Colors.accent.red,
-    background: Colors.dark.background,
-    card: Colors.dark.surface,
-    text: Colors.text.primary,
-    border: Colors.dark.border,
-    notification: Colors.accent.red,
-  },
-};
 
 export default function RootLayout() {
   const [loaded] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
   });
   const { loadUser } = useAuthStore();
+  const { loadSettings } = useSettingsStore();
+  const { isDark, colors, text } = useThemeColor();
 
   useEffect(() => {
     if (loaded) {
-      loadUser().then(() => {
+      Promise.all([loadUser(), loadSettings()]).then(() => {
         SplashScreen.hideAsync();
       });
     }
@@ -41,12 +32,25 @@ export default function RootLayout() {
     return null;
   }
 
+  const IronLogTheme = {
+    ...(isDark ? DarkTheme : DefaultTheme),
+    colors: {
+      ...(isDark ? DarkTheme.colors : DefaultTheme.colors),
+      primary: Colors.accent.red,
+      background: colors.background,
+      card: colors.surface,
+      text: text.primary,
+      border: colors.border,
+      notification: Colors.accent.red,
+    },
+  };
+
   return (
-    <ThemeProvider value={IronLogDarkTheme}>
+    <ThemeProvider value={IronLogTheme}>
       <Stack
         screenOptions={{
           headerShown: false,
-          contentStyle: { backgroundColor: Colors.dark.background },
+          contentStyle: { backgroundColor: colors.background },
           animation: 'slide_from_right',
         }}
       >
@@ -67,15 +71,8 @@ export default function RootLayout() {
             animation: 'slide_from_bottom',
           }} 
         />
-        <Stack.Screen 
-          name="workout-summary" 
-          options={{ 
-            presentation: 'modal',
-            headerShown: false,
-          }} 
-        />
       </Stack>
-      <StatusBar style="light" />
+      <StatusBar style={isDark ? "light" : "dark"} />
     </ThemeProvider>
   );
 }

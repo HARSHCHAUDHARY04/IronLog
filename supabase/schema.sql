@@ -253,3 +253,90 @@ BEGIN
   ORDER BY w.workout_date ASC;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ───────────────────────────────────────────────────────
+-- SOCIAL & GAMIFICATION SCHEMA EXTENSION
+-- ───────────────────────────────────────────────────────
+
+-- 1. Profiles Table Extension (assuming 'profiles' table exists, if not, creating it)
+CREATE TABLE IF NOT EXISTS public.profiles (
+    id UUID REFERENCES auth.users(id) PRIMARY KEY,
+    username TEXT UNIQUE,
+    avatar_url TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    xp INTEGER DEFAULT 0,
+    level INTEGER DEFAULT 1,
+    current_streak INTEGER DEFAULT 0,
+    highest_streak INTEGER DEFAULT 0,
+    total_workouts INTEGER DEFAULT 0,
+    badges TEXT[] DEFAULT '{}'
+);
+
+-- Turn on RLS for profiles
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Public profiles are viewable by everyone."
+ON public.profiles FOR SELECT USING (true);
+
+CREATE POLICY "Users can update their own profile."
+ON public.profiles FOR UPDATE USING (auth.uid() = id);
+
+-- 2. Friends Table
+CREATE TABLE IF NOT EXISTS public.friends (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id_1 UUID REFERENCES public.profiles(id) NOT NULL,
+    user_id_2 UUID REFERENCES public.profiles(id) NOT NULL,
+    status TEXT CHECK (status IN ('pending', 'accepted')) DEFAULT 'pending',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(user_id_1, user_id_2)
+);
+
+ALTER TABLE public.friends ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view their friendships."
+ON public.friends FOR SELECT USING (auth.uid() = user_id_1 OR auth.uid() = user_id_2);
+
+CREATE POLICY "Users can create friend requests."
+ON public.friends FOR INSERT WITH CHECK (auth.uid() = user_id_1);
+
+CREATE POLICY "Users can accept their friend requests."
+ON public.friends FOR UPDATE USING (auth.uid() = user_id_2);
+
+-- 3. Shared Routines Table
+CREATE TABLE IF NOT EXISTS public.shared_routines (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    creator_id UUID REFERENCES public.profiles(id) NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT,
+    exercises JSONB NOT NULL,
+    downloads INTEGER DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+ALTER TABLE public.shared_routines ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Routines are viewable by everyone."
+ON public.shared_routines FOR SELECT USING (true);
+
+CREATE POLICY "Users can share their own routines."
+ON public.shared_routines FOR INSERT WITH CHECK (auth.uid() = creator_id);
+
+-- 4. Global Leaderboard RPC (Function)
+-- Get top users by XP
+CREATE OR REPLACE FUNCTION get_global_leaderboard(limit_num INTEGER DEFAULT 50)
+RETURNS TABLE (
+    id UUID,
+    username TEXT,
+    avatar_url TEXT,
+    level INTEGER,
+    xp INTEGER,
+    total_workouts INTEGER
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT p.id, p.username, p.avatar_url, p.level, p.xp, p.total_workouts
+    FROM public.profiles p
+    ORDER BY p.xp DESC
+    LIMIT limit_num;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;

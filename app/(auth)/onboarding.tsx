@@ -13,10 +13,13 @@ import {
   TextInput,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { Colors, Spacing, BorderRadius, FontSize, FontWeight } from '../../lib/theme';
+import { Colors, useThemeColor, Spacing, BorderRadius, FontSize, FontWeight } from '../../lib/theme';
 import { useAuthStore } from '../../stores/authStore';
 
 export default function OnboardingScreen() {
+  const { colors, text, accent, status, muscle } = useThemeColor();
+  const styles = React.useMemo(() => getStyles(colors, text, accent, status, muscle), [colors, text, accent, status, muscle]);
+
   const router = useRouter();
   const { completeOnboarding, loadDemoData } = useAuthStore();
   const [step, setStep] = useState(1);
@@ -112,7 +115,7 @@ export default function OnboardingScreen() {
               <TextInput
                 style={styles.input}
                 placeholder="e.g. 75"
-                placeholderTextColor={Colors.text.tertiary}
+                placeholderTextColor={text.tertiary}
                 value={weight}
                 onChangeText={setWeight}
                 keyboardType="numeric"
@@ -125,7 +128,7 @@ export default function OnboardingScreen() {
               <TextInput
                 style={styles.input}
                 placeholder="e.g. 28"
-                placeholderTextColor={Colors.text.tertiary}
+                placeholderTextColor={text.tertiary}
                 value={age}
                 onChangeText={setAge}
                 keyboardType="numeric"
@@ -170,10 +173,10 @@ export default function OnboardingScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.dark.background,
+    backgroundColor: colors.background,
   },
   content: {
     flex: 1,
@@ -188,23 +191,23 @@ const styles = StyleSheet.create({
   indicator: {
     flex: 1,
     height: 4,
-    backgroundColor: Colors.dark.surfaceHighlight,
+    backgroundColor: colors.surfaceHighlight,
     borderRadius: 2,
   },
   indicatorActive: {
-    backgroundColor: Colors.accent.red,
+    backgroundColor: accent.red,
   },
   stepContainer: {
     flex: 1,
   },
   title: {
-    color: Colors.text.primary,
+    color: text.primary,
     fontSize: FontSize['3xl'],
     fontWeight: FontWeight.extrabold,
     letterSpacing: -1,
   },
   subtitle: {
-    color: Colors.text.secondary,
+    color: text.secondary,
     fontSize: FontSize.lg,
     marginTop: Spacing.xs,
     marginBottom: Spacing['2xl'],
@@ -215,15 +218,15 @@ const styles = StyleSheet.create({
   optionCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.dark.surface,
+    backgroundColor: colors.surface,
     borderRadius: BorderRadius.xl,
     padding: Spacing.lg,
     borderWidth: 2,
-    borderColor: Colors.dark.border,
+    borderColor: colors.border,
   },
   optionCardActive: {
-    borderColor: Colors.accent.red,
-    backgroundColor: Colors.accent.redGlow,
+    borderColor: accent.red,
+    backgroundColor: accent.redGlow,
   },
   optionIcon: {
     fontSize: 32,
@@ -233,39 +236,39 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   optionTitle: {
-    color: Colors.text.primary,
+    color: text.primary,
     fontSize: FontSize.lg,
     fontWeight: FontWeight.bold,
   },
   optionTitleActive: {
-    color: Colors.accent.red,
+    color: accent.red,
   },
   optionDesc: {
-    color: Colors.text.tertiary,
+    color: text.tertiary,
     fontSize: FontSize.sm,
     marginTop: 2,
   },
   optionDescActive: {
-    color: Colors.text.secondary,
+    color: text.secondary,
   },
   formGroup: {
     marginBottom: Spacing.xl,
   },
   label: {
-    color: Colors.text.secondary,
+    color: text.secondary,
     fontSize: FontSize.md,
     fontWeight: FontWeight.medium,
     marginBottom: Spacing.sm,
   },
   input: {
-    backgroundColor: Colors.dark.surface,
+    backgroundColor: colors.surface,
     borderRadius: BorderRadius.lg,
     paddingHorizontal: Spacing.lg,
     paddingVertical: Spacing.lg,
-    color: Colors.text.primary,
+    color: text.primary,
     fontSize: FontSize.lg,
     borderWidth: 1,
-    borderColor: Colors.dark.border,
+    borderColor: colors.border,
   },
   successIcon: {
     alignItems: 'center',
@@ -280,21 +283,21 @@ const styles = StyleSheet.create({
   },
   backButton: {
     flex: 1,
-    backgroundColor: Colors.dark.surface,
+    backgroundColor: colors.surface,
     borderRadius: BorderRadius.lg,
     paddingVertical: Spacing.lg,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: Colors.dark.border,
+    borderColor: colors.border,
   },
   backButtonText: {
-    color: Colors.text.primary,
+    color: text.primary,
     fontSize: FontSize.lg,
     fontWeight: FontWeight.bold,
   },
   nextButton: {
     flex: 2,
-    backgroundColor: Colors.accent.red,
+    backgroundColor: accent.red,
     borderRadius: BorderRadius.lg,
     paddingVertical: Spacing.lg,
     alignItems: 'center',

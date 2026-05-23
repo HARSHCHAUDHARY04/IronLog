@@ -1,29 +1,72 @@
 import { Tabs } from 'expo-router';
 import { View, StyleSheet, Platform } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { Colors, Spacing } from '../../lib/theme';
+import { Home, Dumbbell, Clock, BarChart2, Users, User as UserIcon } from 'lucide-react-native';
+import { BlurView } from 'expo-blur';
+import Animated, { useAnimatedStyle, withSpring, withTiming } from 'react-native-reanimated';
+import { useThemeColor, Spacing } from '../../lib/theme';
+import React from 'react';
 
-type IoniconsName = React.ComponentProps<typeof Ionicons>['name'];
+const styles = StyleSheet.create({
+  iconContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 48,
+    height: 32,
+  },
+  activeIndicator: {
+    position: 'absolute',
+    bottom: -10,
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+  },
+});
 
-function TabBarIcon({ name, color, focused }: { name: IoniconsName; color: any; focused: boolean }) {
+function TabBarIcon({ IconComponent, color, focused, isDark }: { IconComponent: any; color: string; focused: boolean; isDark: boolean }) {
+  const animatedIconStyle = useAnimatedStyle(() => {
+    return {
+      transform: [{ scale: withSpring(focused ? 1.15 : 1) }],
+      opacity: withTiming(focused ? 1 : 0.6),
+    };
+  });
+
+  const animatedIndicatorStyle = useAnimatedStyle(() => {
+    return {
+      transform: [{ scale: withSpring(focused ? 1 : 0) }],
+      opacity: withTiming(focused ? 1 : 0),
+    };
+  });
+
   return (
-    <View style={[styles.iconContainer, focused && styles.iconFocused]}>
-      <Ionicons name={name} size={24} color={color} />
-      {focused && <View style={styles.activeIndicator} />}
+    <View style={styles.iconContainer}>
+      <Animated.View style={animatedIconStyle}>
+        <IconComponent size={24} color={color} strokeWidth={focused ? 2.5 : 2} />
+      </Animated.View>
+      <Animated.View style={[styles.activeIndicator, { backgroundColor: color }, animatedIndicatorStyle]} />
     </View>
   );
 }
 
 export default function TabLayout() {
+  const { colors, text, accent, isDark } = useThemeColor();
+  const dynamicStyles = React.useMemo(() => getStyles(colors), [colors]);
+
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors.accent.red,
-        tabBarInactiveTintColor: Colors.text.tertiary,
-        tabBarStyle: styles.tabBar,
-        tabBarLabelStyle: styles.tabBarLabel,
+        tabBarActiveTintColor: accent.red,
+        tabBarInactiveTintColor: text.tertiary,
+        tabBarStyle: dynamicStyles.tabBar,
+        tabBarLabelStyle: dynamicStyles.tabBarLabel,
         headerShown: false,
         tabBarHideOnKeyboard: true,
+        tabBarBackground: Platform.OS === 'ios' ? () => (
+          <BlurView 
+            tint={isDark ? "dark" : "light"} 
+            intensity={80} 
+            style={StyleSheet.absoluteFill} 
+          />
+        ) : undefined,
       }}
     >
       <Tabs.Screen
@@ -31,7 +74,7 @@ export default function TabLayout() {
         options={{
           title: 'Home',
           tabBarIcon: ({ color, focused }) => (
-            <TabBarIcon name={focused ? 'home' : 'home-outline'} color={color} focused={focused} />
+            <TabBarIcon IconComponent={Home} color={color} focused={focused} isDark={isDark} />
           ),
         }}
       />
@@ -40,7 +83,7 @@ export default function TabLayout() {
         options={{
           title: 'Workout',
           tabBarIcon: ({ color, focused }) => (
-            <TabBarIcon name={focused ? 'barbell' : 'barbell-outline'} color={color} focused={focused} />
+            <TabBarIcon IconComponent={Dumbbell} color={color} focused={focused} isDark={isDark} />
           ),
         }}
       />
@@ -49,7 +92,7 @@ export default function TabLayout() {
         options={{
           title: 'History',
           tabBarIcon: ({ color, focused }) => (
-            <TabBarIcon name={focused ? 'time' : 'time-outline'} color={color} focused={focused} />
+            <TabBarIcon IconComponent={Clock} color={color} focused={focused} isDark={isDark} />
           ),
         }}
       />
@@ -58,7 +101,16 @@ export default function TabLayout() {
         options={{
           title: 'Analytics',
           tabBarIcon: ({ color, focused }) => (
-            <TabBarIcon name={focused ? 'stats-chart' : 'stats-chart-outline'} color={color} focused={focused} />
+            <TabBarIcon IconComponent={BarChart2} color={color} focused={focused} isDark={isDark} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="community"
+        options={{
+          title: 'Community',
+          tabBarIcon: ({ color, focused }) => (
+            <TabBarIcon IconComponent={Users} color={color} focused={focused} isDark={isDark} />
           ),
         }}
       />
@@ -67,7 +119,7 @@ export default function TabLayout() {
         options={{
           title: 'Profile',
           tabBarIcon: ({ color, focused }) => (
-            <TabBarIcon name={focused ? 'person' : 'person-outline'} color={color} focused={focused} />
+            <TabBarIcon IconComponent={UserIcon} color={color} focused={focused} isDark={isDark} />
           ),
         }}
       />
@@ -75,36 +127,24 @@ export default function TabLayout() {
   );
 }
 
-const styles = StyleSheet.create({
+const getStyles = (colors: any) => StyleSheet.create({
   tabBar: {
-    backgroundColor: Colors.dark.surface,
-    borderTopColor: Colors.dark.border,
-    borderTopWidth: 1,
-    height: Platform.OS === 'ios' ? 88 : 64,
-    paddingTop: Spacing.xs,
-    paddingBottom: Platform.OS === 'ios' ? 28 : 8,
+    backgroundColor: Platform.OS === 'ios' ? 'transparent' : colors.surface,
+    borderTopColor: colors.border,
+    borderTopWidth: 0.5,
+    height: Platform.OS === 'ios' ? 88 : 70,
+    paddingTop: Spacing.sm,
+    paddingBottom: Platform.OS === 'ios' ? 28 : 12,
     elevation: 0,
+    position: Platform.OS === 'ios' ? 'absolute' : 'relative',
+    bottom: 0,
+    left: 0,
+    right: 0,
   },
   tabBarLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    marginTop: 2,
-  },
-  iconContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: 48,
-    height: 32,
-  },
-  iconFocused: {
-    transform: [{ scale: 1.05 }],
-  },
-  activeIndicator: {
-    position: 'absolute',
-    bottom: -4,
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: Colors.accent.red,
+    fontSize: 10,
+    fontWeight: '700',
+    marginTop: 4,
+    letterSpacing: 0.5,
   },
 });

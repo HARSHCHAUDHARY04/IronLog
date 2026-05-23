@@ -15,12 +15,17 @@ import {
   Alert,
 } from 'react-native';
 import { useRouter, Link } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
-import { Colors, Spacing, BorderRadius, FontSize, FontWeight } from '../../lib/theme';
+import { Mail, Lock, Dumbbell } from 'lucide-react-native';
+import { Ionicons } from '@expo/vector-icons'; // Keeping only for Google logo
+import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
+import { useThemeColor, Spacing, BorderRadius, FontSize, FontWeight, Shadows } from '../../lib/theme';
 import { useAuthStore } from '../../stores/authStore';
 import { LinearGradient } from 'expo-linear-gradient';
 
 export default function LoginScreen() {
+  const { colors, text, accent, status, muscle } = useThemeColor();
+  const styles = React.useMemo(() => getStyles(colors, text, accent, status, muscle), [colors, text, accent, status, muscle]);
+
   const router = useRouter();
   const { login, signInWithGoogle } = useAuthStore();
   const [email, setEmail] = useState('');
@@ -59,26 +64,26 @@ export default function LoginScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <View style={styles.content}>
-        <View style={styles.header}>
+        <Animated.View entering={FadeInDown.delay(100).springify()} style={styles.header}>
           <View style={styles.logoContainer}>
             <LinearGradient
-              colors={[Colors.accent.red, '#CC2222']}
+              colors={[accent.red, '#CC2222']}
               style={styles.logoGradient}
             >
-              <Ionicons name="barbell" size={40} color="#fff" />
+              <Dumbbell size={40} color="#fff" strokeWidth={2.5} />
             </LinearGradient>
           </View>
           <Text style={styles.title}>IronLog</Text>
           <Text style={styles.subtitle}>Welcome back to the grind.</Text>
-        </View>
+        </Animated.View>
 
-        <View style={styles.form}>
+        <Animated.View entering={FadeInUp.delay(200).springify()} style={styles.form}>
           <View style={styles.inputContainer}>
-            <Ionicons name="mail-outline" size={20} color={Colors.text.tertiary} style={styles.inputIcon} />
+            <Mail size={20} color={text.tertiary} style={styles.inputIcon} />
             <TextInput
               style={styles.input}
               placeholder="Email address"
-              placeholderTextColor={Colors.text.tertiary}
+              placeholderTextColor={text.tertiary}
               value={email}
               onChangeText={setEmail}
               autoCapitalize="none"
@@ -87,11 +92,11 @@ export default function LoginScreen() {
           </View>
 
           <View style={styles.inputContainer}>
-            <Ionicons name="lock-closed-outline" size={20} color={Colors.text.tertiary} style={styles.inputIcon} />
+            <Lock size={20} color={text.tertiary} style={styles.inputIcon} />
             <TextInput
               style={styles.input}
               placeholder="Password"
-              placeholderTextColor={Colors.text.tertiary}
+              placeholderTextColor={text.tertiary}
               value={password}
               onChangeText={setPassword}
               secureTextEntry
@@ -106,6 +111,7 @@ export default function LoginScreen() {
             style={styles.loginButton}
             onPress={handleLogin}
             disabled={isLoading}
+            activeOpacity={0.8}
           >
             {isLoading ? (
               <ActivityIndicator color="#fff" />
@@ -124,29 +130,30 @@ export default function LoginScreen() {
             style={styles.googleButton}
             onPress={handleGoogleLogin}
             disabled={isLoading}
+            activeOpacity={0.7}
           >
-            <Ionicons name="logo-google" size={20} color={Colors.text.primary} style={styles.googleIcon} />
+            <Ionicons name="logo-google" size={20} color={text.primary} style={styles.googleIcon} />
             <Text style={styles.googleButtonText}>Continue with Google</Text>
           </TouchableOpacity>
-        </View>
+        </Animated.View>
 
-        <View style={styles.footer}>
+        <Animated.View entering={FadeInUp.delay(300).springify()} style={styles.footer}>
           <Text style={styles.footerText}>Don't have an account? </Text>
           <Link href="/(auth)/signup" asChild>
             <TouchableOpacity>
               <Text style={styles.footerLink}>Sign Up</Text>
             </TouchableOpacity>
           </Link>
-        </View>
+        </Animated.View>
       </View>
     </KeyboardAvoidingView>
   );
 }
 
-const styles = StyleSheet.create({
+const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.dark.background,
+    backgroundColor: colors.background,
   },
   content: {
     flex: 1,
@@ -159,6 +166,7 @@ const styles = StyleSheet.create({
   },
   logoContainer: {
     marginBottom: Spacing.xl,
+    ...Shadows.glow(accent.red),
   },
   logoGradient: {
     width: 80,
@@ -169,13 +177,13 @@ const styles = StyleSheet.create({
     transform: [{ rotate: '-10deg' }],
   },
   title: {
-    color: Colors.text.primary,
+    color: text.primary,
     fontSize: FontSize['4xl'],
     fontWeight: FontWeight.extrabold,
     letterSpacing: -1,
   },
   subtitle: {
-    color: Colors.text.secondary,
+    color: text.secondary,
     fontSize: FontSize.md,
     marginTop: Spacing.xs,
   },
@@ -185,35 +193,38 @@ const styles = StyleSheet.create({
   inputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.dark.surface,
+    backgroundColor: colors.surfaceElevated,
     borderRadius: BorderRadius.lg,
     borderWidth: 1,
-    borderColor: Colors.dark.border,
+    borderColor: colors.border,
     paddingHorizontal: Spacing.md,
+    ...Shadows.sm,
   },
   inputIcon: {
     marginRight: Spacing.sm,
   },
   input: {
     flex: 1,
-    color: Colors.text.primary,
+    color: text.primary,
     fontSize: FontSize.md,
     paddingVertical: Spacing.lg,
+    fontWeight: FontWeight.medium,
   },
   forgotPassword: {
     alignSelf: 'flex-end',
     marginBottom: Spacing.lg,
   },
   forgotPasswordText: {
-    color: Colors.accent.red,
+    color: accent.red,
     fontSize: FontSize.sm,
-    fontWeight: FontWeight.medium,
+    fontWeight: FontWeight.bold,
   },
   loginButton: {
-    backgroundColor: Colors.accent.red,
+    backgroundColor: accent.red,
     borderRadius: BorderRadius.lg,
     paddingVertical: Spacing.lg,
     alignItems: 'center',
+    ...Shadows.md,
   },
   loginButtonText: {
     color: '#fff',
@@ -228,29 +239,30 @@ const styles = StyleSheet.create({
   divider: {
     flex: 1,
     height: 1,
-    backgroundColor: Colors.dark.border,
+    backgroundColor: colors.border,
   },
   dividerText: {
-    color: Colors.text.tertiary,
+    color: text.tertiary,
     paddingHorizontal: Spacing.md,
     fontSize: FontSize.sm,
-    fontWeight: FontWeight.semibold,
+    fontWeight: FontWeight.bold,
   },
   googleButton: {
     flexDirection: 'row',
-    backgroundColor: Colors.dark.surface,
+    backgroundColor: colors.surfaceElevated,
     borderRadius: BorderRadius.lg,
     paddingVertical: Spacing.lg,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: Colors.dark.border,
+    borderColor: colors.border,
+    ...Shadows.sm,
   },
   googleIcon: {
     marginRight: Spacing.sm,
   },
   googleButtonText: {
-    color: Colors.text.primary,
+    color: text.primary,
     fontSize: FontSize.lg,
     fontWeight: FontWeight.bold,
   },
@@ -260,11 +272,11 @@ const styles = StyleSheet.create({
     marginTop: Spacing['3xl'],
   },
   footerText: {
-    color: Colors.text.secondary,
+    color: text.secondary,
     fontSize: FontSize.md,
   },
   footerLink: {
-    color: Colors.accent.red,
+    color: accent.red,
     fontSize: FontSize.md,
     fontWeight: FontWeight.bold,
   },

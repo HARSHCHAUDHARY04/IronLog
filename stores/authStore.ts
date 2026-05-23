@@ -24,6 +24,8 @@ interface AuthState {
   completeOnboarding: (data: Partial<User>) => Promise<void>;
   logout: () => Promise<void>;
   loadDemoData: () => Promise<void>;
+  addXP: (amount: number) => Promise<void>;
+  checkBadges: () => Promise<void>;
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
@@ -131,5 +133,48 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   loadDemoData: async () => {
     await seedDemoData();
+    await get().loadUser();
+  },
+
+  addXP: async (amount: number) => {
+    const { user } = get();
+    if (!user) return;
+    
+    const newXP = user.xp + amount;
+    const newLevel = Math.floor(Math.sqrt(newXP / 100)) + 1;
+    
+    const updatedUser = await saveUser({ xp: newXP, level: newLevel });
+    set({ user: updatedUser });
+  },
+
+  checkBadges: async () => {
+    const { user } = get();
+    if (!user) return;
+    
+    const newBadges = [...user.badges];
+    let newlyEarned = false;
+
+    // First Workout Badge
+    if (user.total_workouts >= 1 && !newBadges.includes('first_workout')) {
+      newBadges.push('first_workout');
+      newlyEarned = true;
+    }
+    
+    // 10 Workouts Badge
+    if (user.total_workouts >= 10 && !newBadges.includes('dedicated_10')) {
+      newBadges.push('dedicated_10');
+      newlyEarned = true;
+    }
+
+    // 100 Workouts Badge
+    if (user.total_workouts >= 100 && !newBadges.includes('century_club')) {
+      newBadges.push('century_club');
+      newlyEarned = true;
+    }
+
+    if (newlyEarned) {
+      const updatedUser = await saveUser({ badges: newBadges });
+      set({ user: updatedUser });
+    }
   },
 }));

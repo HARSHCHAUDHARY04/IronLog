@@ -14,12 +14,15 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from 'expo-router';
-import { Colors, Spacing, BorderRadius, FontSize, FontWeight, Shadows } from '../../lib/theme';
+import { Colors, useThemeColor, Spacing, BorderRadius, FontSize, FontWeight, Shadows } from '../../lib/theme';
 import { useWorkoutStore } from '../../stores/workoutStore';
 import { getTemplates, WorkoutTemplate, getWorkouts, Workout } from '../../lib/storage';
 import { LinearGradient } from 'expo-linear-gradient';
 
 export default function WorkoutTab() {
+  const { colors, text, accent, status, muscle } = useThemeColor();
+  const styles = React.useMemo(() => getStyles(colors, text, accent, status, muscle), [colors, text, accent, status, muscle]);
+
   const router = useRouter();
   const { startWorkout, startFromTemplate, isActive } = useWorkoutStore();
   const [templates, setTemplates] = useState<WorkoutTemplate[]>([]);
@@ -124,22 +127,22 @@ export default function WorkoutTab() {
           activeOpacity={0.85}
         >
           <View style={styles.emptySessionIcon}>
-            <Ionicons name="add" size={28} color={Colors.accent.red} />
+            <Ionicons name="add" size={28} color={accent.red} />
           </View>
           <View style={{ flex: 1, marginLeft: Spacing.md }}>
             <Text style={styles.emptySessionTitle}>Empty Workout</Text>
             <Text style={styles.emptySessionSubtext}>Start from scratch, add exercises as you go</Text>
           </View>
-          <Ionicons name="chevron-forward" size={20} color={Colors.text.tertiary} />
+          <Ionicons name="chevron-forward" size={20} color={text.tertiary} />
         </TouchableOpacity>
 
         {/* Search */}
         <View style={styles.searchContainer}>
-          <Ionicons name="search" size={18} color={Colors.text.tertiary} style={styles.searchIcon} />
+          <Ionicons name="search" size={18} color={text.tertiary} style={styles.searchIcon} />
           <TextInput
             style={styles.searchInput}
             placeholder="Search templates..."
-            placeholderTextColor={Colors.text.tertiary}
+            placeholderTextColor={text.tertiary}
             value={searchQuery}
             onChangeText={setSearchQuery}
           />
@@ -168,7 +171,7 @@ export default function WorkoutTab() {
                 {template.exercises.length} exercises • {template.exercises.reduce((sum, e) => sum + e.sets, 0)} sets
               </Text>
             </View>
-            <Ionicons name="play-circle-outline" size={28} color={Colors.accent.red} />
+            <Ionicons name="play-circle-outline" size={28} color={accent.red} />
           </TouchableOpacity>
         ))}
 
@@ -192,7 +195,7 @@ export default function WorkoutTab() {
                     })} • {workout.duration_minutes}min • {workout.total_volume_kg}kg
                   </Text>
                 </View>
-                <Ionicons name="refresh-outline" size={22} color={Colors.text.tertiary} />
+                <Ionicons name="refresh-outline" size={22} color={text.tertiary} />
               </TouchableOpacity>
             ))}
           </>
@@ -204,10 +207,10 @@ export default function WorkoutTab() {
   );
 }
 
-const styles = StyleSheet.create({
+const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.dark.background,
+    backgroundColor: colors.background,
   },
   scrollView: { flex: 1 },
   content: {
@@ -215,7 +218,7 @@ const styles = StyleSheet.create({
     paddingTop: 60,
   },
   title: {
-    color: Colors.text.primary,
+    color: text.primary,
     fontSize: FontSize['3xl'],
     fontWeight: FontWeight.extrabold,
     marginBottom: Spacing['2xl'],
@@ -249,29 +252,29 @@ const styles = StyleSheet.create({
   emptySessionCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.dark.surface,
+    backgroundColor: colors.surface,
     borderRadius: BorderRadius.xl,
     padding: Spacing.lg,
     marginBottom: Spacing.xl,
     borderWidth: 1,
-    borderColor: Colors.dark.border,
+    borderColor: colors.border,
     borderStyle: 'dashed',
   },
   emptySessionIcon: {
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: Colors.accent.redGlow,
+    backgroundColor: accent.redGlow,
     alignItems: 'center',
     justifyContent: 'center',
   },
   emptySessionTitle: {
-    color: Colors.text.primary,
+    color: text.primary,
     fontSize: FontSize.lg,
     fontWeight: FontWeight.bold,
   },
   emptySessionSubtext: {
-    color: Colors.text.tertiary,
+    color: text.tertiary,
     fontSize: FontSize.sm,
     marginTop: 2,
   },
@@ -280,26 +283,26 @@ const styles = StyleSheet.create({
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.dark.surface,
+    backgroundColor: colors.surface,
     borderRadius: BorderRadius.md,
     paddingHorizontal: Spacing.md,
     marginBottom: Spacing.xl,
     borderWidth: 1,
-    borderColor: Colors.dark.border,
+    borderColor: colors.border,
   },
   searchIcon: {
     marginRight: Spacing.sm,
   },
   searchInput: {
     flex: 1,
-    color: Colors.text.primary,
+    color: text.primary,
     fontSize: FontSize.md,
     paddingVertical: Spacing.md,
   },
 
   // Section
   sectionTitle: {
-    color: Colors.text.secondary,
+    color: text.secondary,
     fontSize: FontSize.sm,
     fontWeight: FontWeight.bold,
     textTransform: 'uppercase',
@@ -311,18 +314,18 @@ const styles = StyleSheet.create({
   templateCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.dark.surface,
+    backgroundColor: colors.surface,
     borderRadius: BorderRadius.lg,
     padding: Spacing.md,
     marginBottom: Spacing.sm,
     borderWidth: 1,
-    borderColor: Colors.dark.border,
+    borderColor: colors.border,
   },
   templateIcon: {
     width: 44,
     height: 44,
     borderRadius: 12,
-    backgroundColor: Colors.dark.surfaceHighlight,
+    backgroundColor: colors.surfaceHighlight,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -334,17 +337,17 @@ const styles = StyleSheet.create({
     marginLeft: Spacing.md,
   },
   templateName: {
-    color: Colors.text.primary,
+    color: text.primary,
     fontSize: FontSize.md,
     fontWeight: FontWeight.bold,
   },
   templateMuscles: {
-    color: Colors.text.secondary,
+    color: text.secondary,
     fontSize: FontSize.sm,
     marginTop: 2,
   },
   templateExCount: {
-    color: Colors.text.tertiary,
+    color: text.tertiary,
     fontSize: FontSize.xs,
     marginTop: 2,
   },
@@ -353,23 +356,23 @@ const styles = StyleSheet.create({
   recentCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.dark.surface,
+    backgroundColor: colors.surface,
     borderRadius: BorderRadius.lg,
     padding: Spacing.md,
     marginBottom: Spacing.sm,
     borderWidth: 1,
-    borderColor: Colors.dark.border,
+    borderColor: colors.border,
   },
   recentInfo: {
     flex: 1,
   },
   recentName: {
-    color: Colors.text.primary,
+    color: text.primary,
     fontSize: FontSize.md,
     fontWeight: FontWeight.semibold,
   },
   recentMeta: {
-    color: Colors.text.tertiary,
+    color: text.tertiary,
     fontSize: FontSize.sm,
     marginTop: 2,
   },

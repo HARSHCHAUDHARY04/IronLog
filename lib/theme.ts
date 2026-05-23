@@ -6,20 +6,36 @@
 export const Colors = {
   // Core palette
   dark: {
-    background: '#0A0E1A',
-    surface: '#111827',
-    surfaceElevated: '#1A2236',
-    surfaceHighlight: '#222D45',
-    border: '#2A3550',
-    borderLight: '#374565',
+    background: '#060816', // Deepest background
+    surface: '#0E1424',    // Base surface
+    surfaceElevated: '#131C31', // Card surface
+    surfaceHighlight: '#1A243A',
+    border: 'rgba(255,255,255,0.05)', // Extremely soft borders
+    borderLight: 'rgba(255,255,255,0.1)',
+  },
+  light: {
+    background: '#F9FAFB',
+    surface: '#FFFFFF',
+    surfaceElevated: '#F3F4F6',
+    surfaceHighlight: '#E5E7EB',
+    border: '#D1D5DB',
+    borderLight: '#9CA3AF',
   },
 
   // Text
   text: {
-    primary: '#F0F4FF',
-    secondary: '#8B95B0',
-    tertiary: '#5B6580',
-    inverse: '#0A0E1A',
+    dark: {
+      primary: '#F0F4FF', // Crisp white with a hint of blue
+      secondary: 'rgba(255, 255, 255, 0.6)', // Softer secondary
+      tertiary: 'rgba(255, 255, 255, 0.4)',
+      inverse: '#060816',
+    },
+    light: {
+      primary: '#111827',
+      secondary: '#4B5563',
+      tertiary: '#6B7280',
+      inverse: '#F9FAFB',
+    }
   },
 
   // Accent colors
@@ -150,30 +166,6 @@ export const Shadows = {
 export const CommonStyles = {
   screenContainer: {
     flex: 1,
-    backgroundColor: Colors.dark.background,
-  },
-  card: {
-    backgroundColor: Colors.dark.surface,
-    borderRadius: BorderRadius.lg,
-    padding: Spacing.lg,
-    borderWidth: 1,
-    borderColor: Colors.dark.border,
-  },
-  cardElevated: {
-    backgroundColor: Colors.dark.surfaceElevated,
-    borderRadius: BorderRadius.lg,
-    padding: Spacing.lg,
-    borderWidth: 1,
-    borderColor: Colors.dark.border,
-    ...Shadows.md,
-  },
-  inputContainer: {
-    backgroundColor: Colors.dark.surfaceHighlight,
-    borderRadius: BorderRadius.md,
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.md,
-    borderWidth: 1,
-    borderColor: Colors.dark.border,
   },
   button: {
     backgroundColor: Colors.accent.red,
@@ -184,22 +176,40 @@ export const CommonStyles = {
     justifyContent: 'center' as const,
   },
   buttonText: {
-    color: Colors.text.primary,
     fontSize: FontSize.lg,
     fontWeight: FontWeight.bold,
   },
   sectionTitle: {
-    color: Colors.text.primary,
     fontSize: FontSize.xl,
     fontWeight: FontWeight.bold,
     marginBottom: Spacing.md,
   },
   label: {
-    color: Colors.text.secondary,
     fontSize: FontSize.sm,
     fontWeight: FontWeight.medium,
     marginBottom: Spacing.xs,
     textTransform: 'uppercase' as const,
     letterSpacing: 0.5,
   },
+};
+
+import { useSettingsStore } from '../stores/settingsStore';
+import { useColorScheme } from 'react-native';
+
+export const useThemeColor = () => {
+  const { theme } = useSettingsStore();
+  const systemTheme = useColorScheme() ?? 'dark';
+  
+  const activeTheme = theme === 'system' ? systemTheme : theme;
+  const isDark = activeTheme === 'dark';
+  
+  return {
+    isDark,
+    colors: isDark ? Colors.dark : Colors.light,
+    text: isDark ? Colors.text.dark : Colors.text.light,
+    accent: Colors.accent,
+    status: Colors.status,
+    muscle: Colors.muscle,
+    gradients: Colors.gradients,
+  };
 };
