@@ -169,6 +169,9 @@ export default function ProfileScreen() {
                   <Text style={styles.levelBadgeText}>Lvl {user?.level || 1}</Text>
                 </View>
               </View>
+              <Text style={styles.profileUsername}>
+                @{user?.name ? user.name.toLowerCase().replace(/\s+/g, '_') : 'lifter'}
+              </Text>
               <Text style={styles.profileEmail}>{user?.email || ''}</Text>
               
               {/* XP Progress Bar */}
@@ -595,6 +598,12 @@ const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any
     color: '#fff',
     fontSize: FontSize.xs,
     fontWeight: FontWeight.bold,
+  },
+  profileUsername: {
+    color: accent.red,
+    fontSize: FontSize.xs,
+    fontWeight: FontWeight.bold,
+    marginTop: 2,
   },
   profileEmail: {
     color: text.tertiary,

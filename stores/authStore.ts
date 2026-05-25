@@ -35,8 +35,56 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   loadUser: async () => {
     try {
-      const user = await getUser();
-      set({ user, isAuthenticated: !!user, isLoading: false });
+      let localUser = await getUser();
+      
+      // Attempt to retrieve active session user from Supabase client
+      const { data: { user: sbUser } } = await supabase.auth.getUser();
+      
+      if (sbUser) {
+        const email = sbUser.email || localUser?.email || 'google.user@example.com';
+        const name = sbUser.user_metadata?.full_name || sbUser.user_metadata?.name || localUser?.name || email.split('@')[0];
+        
+        let xp = localUser?.xp || 0;
+        let level = localUser?.level || 1;
+        let badges = localUser?.badges || [];
+        let total_workouts = localUser?.total_workouts || 0;
+        let current_streak = localUser?.current_streak || 0;
+        let highest_streak = localUser?.highest_streak || 0;
+
+        try {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', sbUser.id)
+            .single();
+          
+          if (profile) {
+            xp = profile.xp ?? xp;
+            level = profile.level ?? level;
+            badges = profile.badges ?? badges;
+            total_workouts = profile.total_workouts ?? total_workouts;
+            current_streak = profile.current_streak ?? current_streak;
+            highest_streak = profile.highest_streak ?? highest_streak;
+          }
+        } catch (dbErr) {
+          console.warn('Failed to fetch profile during loadUser:', dbErr);
+        }
+
+        localUser = await saveUser({
+          id: sbUser.id,
+          email,
+          name,
+          xp,
+          level,
+          badges,
+          total_workouts,
+          current_streak,
+          highest_streak,
+          onboarding_completed: localUser?.onboarding_completed ?? false,
+        });
+      }
+
+      set({ user: localUser, isAuthenticated: !!localUser, isLoading: false });
     } catch (e) {
       set({ isLoading: false });
     }
@@ -97,11 +145,98 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           { showInRecents: true }
         );
         
-        if (result.type === 'success') {
-          // If successful, Supabase handles the URL and sets the session automatically.
-          // Since we are still partially in mock mode for data storage, we will ensure a local user exists.
-          const user = await saveUser({ email: 'google.user@example.com', name: 'Google User', onboarding_completed: false });
-          set({ user, isAuthenticated: true, isLoading: false });
+        if (result.type === 'success' && result.url) {
+          // Parse access_token and refresh_token from redirect URL
+          const urlStr = result.url;
+          const paramsString = urlStr.split('#')[1] || urlStr.split('?')[1];
+          if (paramsString) {
+            const params = paramsString.split('&').reduce((acc, current) => {
+              const [key, value] = current.split('=');
+              if (key && value) {
+                acc[key] = decodeURIComponent(value);
+              }
+              return acc;
+            }, {} as Record<string, string>);
+
+            if (params.access_token && params.refresh_token) {
+              const { error: sessionError } = await supabase.auth.setSession({
+                access_token: params.access_token,
+                refresh_token: params.refresh_token,
+              });
+              if (sessionError) {
+                console.error('Failed to set Supabase session:', sessionError);
+              }
+            }
+          }
+
+          // Polling loop to wait for the Supabase session to complete initialization
+          let sbUser = null;
+          for (let i = 0; i < 6; i++) {
+            const { data: userData } = await supabase.auth.getUser();
+            if (userData?.user) {
+              sbUser = userData.user;
+              break;
+            }
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+
+          if (!sbUser) {
+            throw new Error('Google Auth succeeded but failed to fetch Supabase user session.');
+          }
+
+          const email = sbUser.email || 'google.user@example.com';
+          const name = sbUser.user_metadata?.full_name || sbUser.user_metadata?.name || email.split('@')[0];
+          
+          // Try to fetch existing profile state from database or AsyncStorage
+          const existingUser = await getUser();
+          const isOnboardingCompleted = existingUser?.onboarding_completed || false;
+          let xp = existingUser?.xp || 0;
+          let level = existingUser?.level || 1;
+          let badges = existingUser?.badges || [];
+
+          try {
+            const { data: profile } = await supabase
+              .from('profiles')
+              .select('*')
+              .eq('id', sbUser.id)
+              .single();
+            
+            if (profile) {
+              xp = profile.xp ?? xp;
+              level = profile.level ?? level;
+              badges = profile.badges ?? badges;
+            }
+          } catch (dbErr) {
+            console.warn('Failed to fetch existing profile from DB:', dbErr);
+          }
+
+          const localUser = await saveUser({
+            id: sbUser.id, // Sync the unique Supabase user ID locally
+            email,
+            name,
+            xp,
+            level,
+            badges,
+            onboarding_completed: isOnboardingCompleted
+          });
+
+          // Sync user profile row back in Supabase database
+          try {
+            await supabase
+              .from('profiles')
+              .upsert({
+                id: sbUser.id,
+                username: name.toLowerCase().replace(/\s+/g, '_'),
+                avatar_url: sbUser.user_metadata?.avatar_url || '',
+                xp,
+                level,
+                badges
+              });
+          } catch (upsertErr) {
+            console.warn('Silent fallback on profiles row upsert:', upsertErr);
+          }
+
+          set({ user: localUser, isAuthenticated: true, isLoading: false });
           return true;
         }
       }
@@ -109,7 +244,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({ isLoading: false });
       return false;
     } catch (e) {
-      console.error(e);
+      console.error('Google Sign In Error:', e);
       set({ isLoading: false });
       return false;
     }

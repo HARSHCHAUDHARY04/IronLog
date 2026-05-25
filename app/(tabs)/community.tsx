@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Platform, KeyboardAvoidingView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, useThemeColor, Spacing, BorderRadius, FontSize, FontWeight } from '../../lib/theme';
 import { useAuthStore } from '../../stores/authStore';
-import { Sparkles, Send, Brain, Bot } from 'lucide-react-native';
+import { Sparkles, Send, Brain, Bot, Volume2, VolumeX, Mic } from 'lucide-react-native';
+import * as Speech from 'expo-speech';
+import MarkdownText from '../../components/MarkdownText';
 
 export default function CommunityScreen() {
   const { colors, text, accent, status, muscle } = useThemeColor();
@@ -23,6 +25,180 @@ export default function CommunityScreen() {
   ]);
   const [inputMessage, setInputMessage] = useState('');
   const [isAIResponding, setIsAIResponding] = useState(false);
+
+  // Voice playback state
+  const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
+
+  // Voice recording states
+  const [isListening, setIsListening] = useState(false);
+  const [recognition, setRecognition] = useState<any>(null);
+
+  // Stop speaking when leaving tab or unmounting
+  useEffect(() => {
+    return () => {
+      Speech.stop();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== 'ai_coach') {
+      Speech.stop();
+      setSpeakingMessageId(null);
+    }
+  }, [activeTab]);
+
+  // HTML5 Web Speech Dictation Init
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        const rec = new SpeechRecognition();
+        rec.continuous = false;
+        rec.interimResults = false;
+        rec.lang = 'en-US';
+
+        rec.onstart = () => {
+          setIsListening(true);
+        };
+
+        rec.onresult = (event: any) => {
+          const transcript = event.results[0][0].transcript;
+          setInputMessage(prev => prev + (prev ? ' ' : '') + transcript);
+        };
+
+        rec.onerror = (event: any) => {
+          console.error('Speech recognition error:', event.error);
+          setIsListening(false);
+          if (Platform.OS === 'web') {
+            if (event.error === 'not-allowed') {
+              alert("Microphone Access Denied!\n\nPlease click the lock or settings icon in your browser's address bar and enable Microphone permissions to use voice dictation.");
+            } else if (event.error === 'no-speech') {
+              console.log('No speech detected.');
+            } else {
+              alert(`Speech recognition failed: ${event.error}\n\n💡 Note: Browsers disable Speech Recognition on insecure IP-address connections. Please load the site via 'localhost:8081' or 'https' to use this feature.`);
+            }
+          }
+        };
+
+        rec.onend = () => {
+          setIsListening(false);
+        };
+
+        setRecognition(rec);
+      }
+    }
+  }, []);
+
+  const toggleListening = () => {
+    if (!recognition) {
+      if (Platform.OS !== 'web') {
+        const { Alert } = require('react-native');
+        Alert.alert(
+          "Mobile Voice Typing Dictation",
+          "For high-accuracy voice input on iOS and Android:\n\n1. Tap the text input field.\n2. When the keyboard opens, tap the keyboard microphone button (🎤) next to your space bar!\n\nThis system-level dictation is fast, offline-capable, and works natively.",
+          [{ text: "Got it!" }]
+        );
+      } else {
+        alert("Speech recognition is not supported in this browser. Please use Chrome, Safari, or Edge over localhost or HTTPS.");
+      }
+      return;
+    }
+
+    try {
+      if (isListening) {
+        recognition.stop();
+      } else {
+        recognition.start();
+      }
+    } catch (err: any) {
+      console.error(err);
+      if (Platform.OS === 'web') {
+        alert(`Failed to start speech recognition: ${err.message || String(err)}`);
+      }
+    }
+  };
+
+  const handleSpeak = async (messageId: string, textToSpeak: string) => {
+    if (speakingMessageId === messageId) {
+      try {
+        Speech.stop();
+      } catch (e) {
+        console.error('Speech.stop failed:', e);
+      }
+      setSpeakingMessageId(null);
+      return;
+    }
+
+    try {
+      Speech.stop();
+    } catch (e) {}
+
+    setSpeakingMessageId(messageId);
+
+    // Clean markdown formatting before speaking so the coach sounds highly natural
+    const cleanText = textToSpeak
+      .replace(/[\*\#\-\`\>\_\n]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    console.log('[Speaker] Starting TTS playback for:', cleanText);
+
+    try {
+      Speech.speak(cleanText, {
+        rate: 0.95,
+        pitch: 1.0,
+        onStart: () => {
+          console.log('[Speaker] Speech started successfully via expo-speech');
+        },
+        onDone: () => {
+          console.log('[Speaker] Speech finished naturally');
+          setSpeakingMessageId(null);
+        },
+        onError: (err: any) => {
+          console.error('[Speaker] expo-speech error:', err);
+          setSpeakingMessageId(null);
+          
+          if (Platform.OS === 'web') {
+            console.log('[Speaker] Attempting direct browser HTML5 speechSynthesis fallback...');
+            try {
+              window.speechSynthesis.cancel();
+              const utterance = new SpeechSynthesisUtterance(cleanText);
+              utterance.rate = 0.95;
+              utterance.pitch = 1.0;
+              utterance.onend = () => setSpeakingMessageId(null);
+              utterance.onerror = () => setSpeakingMessageId(null);
+              window.speechSynthesis.speak(utterance);
+              setSpeakingMessageId(messageId);
+              console.log('[Speaker] Direct browser fallback activated successfully!');
+            } catch (fallbackErr) {
+              console.error('[Speaker] Direct browser fallback failed:', fallbackErr);
+            }
+          }
+        },
+      });
+    } catch (speechErr) {
+      console.error('[Speaker] expo-speech speak command failed:', speechErr);
+      setSpeakingMessageId(null);
+
+      // Direct Web fallback if the expo-speech package has a loading/linkage crash on Web
+      if (Platform.OS === 'web') {
+        console.log('[Speaker] Attempting direct browser HTML5 speechSynthesis fallback after crash...');
+        try {
+          window.speechSynthesis.cancel();
+          const utterance = new SpeechSynthesisUtterance(cleanText);
+          utterance.rate = 0.95;
+          utterance.pitch = 1.0;
+          utterance.onend = () => setSpeakingMessageId(null);
+          utterance.onerror = () => setSpeakingMessageId(null);
+          window.speechSynthesis.speak(utterance);
+          setSpeakingMessageId(messageId);
+          console.log('[Speaker] Direct browser fallback activated after package crash!');
+        } catch (fallbackErr) {
+          console.error('[Speaker] Direct browser fallback failed:', fallbackErr);
+        }
+      }
+    }
+  };
 
   const SUGGESTED_PROMPTS = [
     "Break a bench press plateau",
@@ -55,11 +231,12 @@ export default function CommunityScreen() {
         sender: 'ai' as const,
         timestamp: new Date()
       }]);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      const errorMessage = err?.message || String(err);
       setMessages(prev => [...prev, {
         id: (Date.now() + 1).toString(),
-        text: "I couldn't establish a secure line to the server. Please verify that your `EXPO_PUBLIC_GEMINI_API_KEY` is fully configured inside the `.env` file at the root of the workspace.",
+        text: `Unable to reach the AI Coach.\n\nError details:\n"${errorMessage}"\n\n💡 Troubleshooting tip: If the API key is not active, try restarting your Expo dev server with clear cache:\n\n   npx expo start -c`,
         sender: 'ai' as const,
         timestamp: new Date()
       }]);
@@ -68,13 +245,88 @@ export default function CommunityScreen() {
     }
   };
 
-  // Mock Data
-  const leaderboard = [
-    { rank: 1, name: 'Alex Johnson', level: 12, xp: 14500, avatar: 'A' },
-    { rank: 2, name: 'Sam Smith', level: 11, xp: 12200, avatar: 'S' },
-    { rank: 3, name: user?.name || 'You', level: user?.level || 1, xp: user?.xp || 0, avatar: (user?.name || 'Y').charAt(0).toUpperCase(), isMe: true },
-    { rank: 4, name: 'Jordan Davis', level: 5, xp: 2500, avatar: 'J' },
-  ].sort((a, b) => b.xp - a.xp).map((item, idx) => ({ ...item, rank: idx + 1 }));
+  // Dynamic Social State
+  const [leaderboard, setLeaderboard] = useState<any[]>([]);
+  const [friends, setFriends] = useState<any[]>([]);
+  const [isLoadingSocial, setIsLoadingSocial] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [isSearchMode, setIsSearchMode] = useState(false);
+
+  const loadSocialData = async () => {
+    setIsLoadingSocial(true);
+    try {
+      const { fetchGlobalLeaderboard, fetchFriends } = require('../../lib/social');
+      const [lb, fr] = await Promise.all([
+        fetchGlobalLeaderboard(20),
+        fetchFriends()
+      ]);
+      setLeaderboard(lb);
+      setFriends(fr);
+    } catch (e) {
+      console.error('Failed to load social data:', e);
+    } finally {
+      setIsLoadingSocial(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'leaderboard' || activeTab === 'friends') {
+      loadSocialData();
+    }
+  }, [activeTab]);
+
+  const handleSearch = async (val: string) => {
+    setSearchQuery(val);
+    if (!val.trim()) {
+      setSearchResults([]);
+      return;
+    }
+    try {
+      const { searchUsers } = require('../../lib/social');
+      const res = await searchUsers(val);
+      setSearchResults(res);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleAddFriend = async (friendId: string) => {
+    try {
+      const { addFriend } = require('../../lib/social');
+      const success = await addFriend(friendId);
+      if (success) {
+        await loadSocialData();
+        setSearchResults(prev => prev.filter(u => u.id !== friendId));
+        if (Platform.OS === 'web') {
+          alert("Friend added successfully!");
+        } else {
+          const { Alert } = require('react-native');
+          Alert.alert("Success", "Friend added successfully!");
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleRemoveFriend = async (friendId: string) => {
+    try {
+      const { removeFriend } = require('../../lib/social');
+      const success = await removeFriend(friendId);
+      if (success) {
+        await loadSocialData();
+        if (Platform.OS === 'web') {
+          alert("Friend removed successfully.");
+        } else {
+          const { Alert } = require('react-native');
+          Alert.alert("Removed", "Friend removed successfully.");
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   return (
     <View style={styles.container}>
@@ -94,51 +346,170 @@ export default function CommunityScreen() {
         </TouchableOpacity>
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
-        {activeTab === 'leaderboard' && (
-          <View>
-            <Text style={styles.sectionTitle}>Global Leaderboard</Text>
-            {leaderboard.map((u) => (
-              <View key={u.name} style={[styles.userCard, u.isMe && styles.myCard]}>
-                <Text style={styles.rank}>#{u.rank}</Text>
-                <View style={styles.avatar}>
-                  <Text style={styles.avatarText}>{u.avatar}</Text>
+      {activeTab !== 'ai_coach' ? (
+        <ScrollView contentContainerStyle={styles.content}>
+          {activeTab === 'leaderboard' && (
+            <View>
+              <Text style={styles.sectionTitle}>Global Leaderboard</Text>
+              {isLoadingSocial && leaderboard.length === 0 ? (
+                <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+                  <Text style={{ color: text.tertiary, fontStyle: 'italic' }}>Loading Leaderboard...</Text>
                 </View>
-                <View style={styles.userInfo}>
-                  <Text style={styles.userName}>{u.name}</Text>
-                  <Text style={styles.userLevel}>Lvl {u.level}</Text>
-                </View>
-                <Text style={styles.userXP}>{u.xp} XP</Text>
-              </View>
-            ))}
-          </View>
-        )}
-
-        {activeTab === 'friends' && (
-          <View>
-            <Text style={styles.sectionTitle}>Your Friends</Text>
-            <View style={styles.emptyState}>
-              <Ionicons name="people" size={48} color={text.tertiary} />
-              <Text style={styles.emptyText}>You haven't added any friends yet.</Text>
-              <TouchableOpacity style={styles.primaryButton}>
-                <Text style={styles.primaryButtonText}>Find Friends</Text>
-              </TouchableOpacity>
+              ) : (
+                leaderboard.map((u) => (
+                  <View key={u.id} style={[styles.userCard, u.isMe && styles.myCard]}>
+                    <Text style={styles.rank}>#{u.rank}</Text>
+                    <View style={styles.avatar}>
+                      <Text style={styles.avatarText}>{u.avatar}</Text>
+                    </View>
+                    <View style={styles.userInfo}>
+                      <Text style={styles.userName}>{u.name} {u.isMe && '(You)'}</Text>
+                      <Text style={styles.userLevel}>Lvl {u.level}</Text>
+                    </View>
+                    <Text style={styles.userXP}>{u.xp} XP</Text>
+                  </View>
+                ))
+              )}
             </View>
-          </View>
-        )}
+          )}
 
-        {activeTab === 'ai_coach' && (
-          <View style={{ flex: 1, minHeight: 450 }}>
+          {activeTab === 'friends' && (
+            <View>
+              {isSearchMode ? (
+                <View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                    <Text style={styles.sectionTitle}>Find Friends</Text>
+                    <TouchableOpacity onPress={() => { setIsSearchMode(false); setSearchQuery(''); setSearchResults([]); }}>
+                      <Text style={{ color: accent.red, fontWeight: 'bold', fontSize: 13 }}>Cancel</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <TextInput
+                    style={{
+                      backgroundColor: colors.surfaceHighlight,
+                      borderRadius: BorderRadius.md,
+                      padding: 12,
+                      color: text.primary,
+                      borderWidth: 1,
+                      borderColor: colors.border,
+                      marginBottom: 16
+                    }}
+                    placeholder="Search username..."
+                    placeholderTextColor={text.tertiary}
+                    value={searchQuery}
+                    onChangeText={handleSearch}
+                    autoFocus
+                  />
+
+                  {searchResults.length === 0 ? (
+                    <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+                      <Text style={{ color: text.tertiary, fontStyle: 'italic', fontSize: 13 }}>
+                        {searchQuery ? "No lifters found matching that search." : "Type a name to search lifters..."}
+                      </Text>
+                    </View>
+                  ) : (
+                    searchResults.map((u) => (
+                      <View key={u.id} style={styles.userCard}>
+                        <View style={styles.avatar}>
+                          <Text style={styles.avatarText}>{u.avatar}</Text>
+                        </View>
+                        <View style={styles.userInfo}>
+                          <Text style={styles.userName}>{u.name}</Text>
+                          <Text style={styles.userLevel}>Lvl {u.level} • {u.xp} XP</Text>
+                        </View>
+                        <TouchableOpacity
+                          style={{
+                            backgroundColor: '#EAB308',
+                            paddingHorizontal: 12,
+                            paddingVertical: 6,
+                            borderRadius: 6
+                          }}
+                          onPress={() => handleAddFriend(u.id)}
+                        >
+                          <Text style={{ color: '#1E1B18', fontWeight: 'bold', fontSize: 12 }}>+ Add</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ))
+                  )}
+                </View>
+              ) : (
+                <View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                    <Text style={styles.sectionTitle}>Your Friends</Text>
+                    <TouchableOpacity 
+                      style={{
+                        backgroundColor: colors.surfaceHighlight,
+                        paddingHorizontal: 12,
+                        paddingVertical: 6,
+                        borderRadius: 6,
+                        borderWidth: 1,
+                        borderColor: colors.border
+                      }}
+                      onPress={() => setIsSearchMode(true)}
+                    >
+                      <Text style={{ color: text.secondary, fontWeight: 'bold', fontSize: 12 }}>+ Find Friends</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {isLoadingSocial && friends.length === 0 ? (
+                    <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+                      <Text style={{ color: text.tertiary, fontStyle: 'italic' }}>Loading Friends list...</Text>
+                    </View>
+                  ) : friends.length === 0 ? (
+                    <View style={styles.emptyState}>
+                      <Ionicons name="people" size={48} color={text.tertiary} />
+                      <Text style={styles.emptyText}>You haven't added any friends yet.</Text>
+                      <TouchableOpacity style={styles.primaryButton} onPress={() => setIsSearchMode(true)}>
+                        <Text style={styles.primaryButtonText}>Find Friends</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    friends.map((friend) => (
+                      <View key={friend.id} style={styles.userCard}>
+                        <View style={styles.avatar}>
+                          <Text style={styles.avatarText}>{friend.avatar}</Text>
+                        </View>
+                        <View style={styles.userInfo}>
+                          <Text style={styles.userName}>{friend.name}</Text>
+                          <Text style={styles.userLevel}>Lvl {friend.level} • {friend.xp} XP</Text>
+                        </View>
+                        <TouchableOpacity
+                          style={{
+                            paddingHorizontal: 10,
+                            paddingVertical: 6,
+                            borderRadius: 6,
+                            borderWidth: 1,
+                            borderColor: 'rgba(239, 68, 68, 0.2)'
+                          }}
+                          onPress={() => handleRemoveFriend(friend.id)}
+                        >
+                          <Text style={{ color: accent.red, fontSize: 11, fontWeight: 'bold' }}>Remove</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ))
+                  )}
+                </View>
+              )}
+            </View>
+          )}
+        </ScrollView>
+      ) : (
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1 }}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 0}
+        >
+          <View style={{ flex: 1, paddingHorizontal: Spacing.lg, paddingBottom: Spacing.lg }}>
             <Text style={styles.sectionTitle}>IronBot AI Personal Trainer</Text>
-            
+
             {/* Chat Messages */}
             <View style={{
+              flex: 1,
               backgroundColor: colors.surface,
               borderRadius: BorderRadius.lg,
               borderWidth: 1,
               borderColor: colors.border,
               padding: Spacing.md,
-              height: 300,
               marginBottom: Spacing.md
             }}>
               <ScrollView 
@@ -162,16 +533,48 @@ export default function CommunityScreen() {
                         marginVertical: 4,
                         maxWidth: '85%',
                         borderWidth: 1,
-                        borderColor: isAI ? 'rgba(234,179,8,0.2)' : 'transparent'
+                        borderColor: isAI ? 'rgba(234,179,8,0.2)' : 'transparent',
+                        paddingRight: isAI ? 36 : 10,
+                        position: 'relative'
                       }}
                     >
-                      <Text style={{ 
-                        color: isAI ? text.primary : '#1E1B18', 
-                        fontSize: 14,
-                        fontWeight: isAI ? 'normal' : '600'
-                      }}>
-                        {msg.text}
-                      </Text>
+                      {isAI ? (
+                        <MarkdownText 
+                          content={msg.text} 
+                          colors={colors}
+                          textColors={text}
+                          textStyles={{ 
+                            color: text.primary, 
+                            fontSize: 14 
+                          }} 
+                        />
+                      ) : (
+                        <Text style={{ 
+                          color: '#1E1B18', 
+                          fontSize: 14,
+                          fontWeight: '600'
+                        }}>
+                          {msg.text}
+                        </Text>
+                      )}
+                      
+                      {isAI && (
+                        <TouchableOpacity
+                          style={{
+                            position: 'absolute',
+                            right: 6,
+                            bottom: 6,
+                            padding: 4,
+                          }}
+                          onPress={() => handleSpeak(msg.id, msg.text)}
+                        >
+                          {speakingMessageId === msg.id ? (
+                            <Volume2 size={16} color="#EAB308" />
+                          ) : (
+                            <VolumeX size={16} color={text.tertiary} />
+                          )}
+                        </TouchableOpacity>
+                      )}
                     </View>
                   );
                 })}
@@ -238,6 +641,21 @@ export default function CommunityScreen() {
               />
               <TouchableOpacity
                 style={{
+                  backgroundColor: isListening ? '#EF4444' : colors.surfaceHighlight,
+                  width: 44,
+                  height: 44,
+                  borderRadius: 22,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderWidth: 1,
+                  borderColor: isListening ? '#EF4444' : colors.border
+                }}
+                onPress={toggleListening}
+              >
+                <Mic size={18} color={isListening ? '#FFF' : text.secondary} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{
                   backgroundColor: '#EAB308',
                   width: 44,
                   height: 44,
@@ -251,8 +669,8 @@ export default function CommunityScreen() {
               </TouchableOpacity>
             </View>
           </View>
-        )}
-      </ScrollView>
+        </KeyboardAvoidingView>
+      )}
     </View>
   );
 }

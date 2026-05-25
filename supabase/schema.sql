@@ -302,6 +302,9 @@ ON public.friends FOR INSERT WITH CHECK (auth.uid() = user_id_1);
 CREATE POLICY "Users can accept their friend requests."
 ON public.friends FOR UPDATE USING (auth.uid() = user_id_2);
 
+CREATE POLICY "Users can remove their friendships."
+ON public.friends FOR DELETE USING (auth.uid() = user_id_1 OR auth.uid() = user_id_2);
+
 -- 3. Shared Routines Table
 CREATE TABLE IF NOT EXISTS public.shared_routines (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

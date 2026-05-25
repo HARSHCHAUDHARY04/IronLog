@@ -12,6 +12,8 @@ const getApiKey = () => process.env.EXPO_PUBLIC_GEMINI_API_KEY || '';
  */
 export async function generateGeminiContent(payload: object): Promise<any> {
   const apiKey = getApiKey();
+  console.log('[Gemini API] Request sent. API Key loaded:', apiKey ? `Yes (...${apiKey.slice(-4)})` : 'No (MISSING)');
+  
   if (!apiKey) {
     throw new Error('Gemini API key is missing. Please add EXPO_PUBLIC_GEMINI_API_KEY to your .env file.');
   }
@@ -49,9 +51,20 @@ export async function getAICoachingAdvice(userPrompt: string): Promise<string> {
       {
         parts: [
           {
-            text: `You are IronBot, a highly professional personal trainer and fitness coach for the IronLog fitness tracking app. 
-            Give highly tactical, motivating, and science-based fitness or nutrition advice. Keep the response concise, punchy, and formatted in clean markdown. 
-            User question: "${userPrompt}"`
+            text: `You are IronBot, an elite personal trainer, CSCS (Certified Strength and Conditioning Specialist), and nutrition coach for the IronLog fitness app.
+            
+            Deliver a highly technical, science-based, and actionable fitness directive.
+            
+            STRICT CONSTRAINTS:
+            - ZERO conversational preambles: Do NOT write "Sure!", "Hello!", "Here is some advice", or any introductory filler. Start directly with the first header or answer.
+            - ZERO conversational sign-offs: Do NOT write "Keep lifting!", "Hope this helps!", "Let me know if you need anything else", or any friendly summaries at the end.
+            - HIGH CONCISENESS: Keep the entire response extremely compact, high-density, and straight to the point (Strictly under 120 words).
+            - Format PURE actionable coaching value in clean Markdown:
+              - Use ### for clear section headers.
+              - Use **concept** to emphasize tactical directives.
+              - Use concise single-line bullet points (- ) for instructions.
+              
+            User Question: "${userPrompt}"`
           }
         ]
       }

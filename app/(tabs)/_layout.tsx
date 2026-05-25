@@ -13,13 +13,6 @@ const styles = StyleSheet.create({
     width: 48,
     height: 32,
   },
-  activeIndicator: {
-    position: 'absolute',
-    bottom: -10,
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-  },
 });
 
 function TabBarIcon({ IconComponent, color, focused, isDark }: { IconComponent: any; color: string; focused: boolean; isDark: boolean }) {
@@ -30,19 +23,11 @@ function TabBarIcon({ IconComponent, color, focused, isDark }: { IconComponent: 
     };
   });
 
-  const animatedIndicatorStyle = useAnimatedStyle(() => {
-    return {
-      transform: [{ scale: withSpring(focused ? 1 : 0) }],
-      opacity: withTiming(focused ? 1 : 0),
-    };
-  });
-
   return (
     <View style={styles.iconContainer}>
       <Animated.View style={animatedIconStyle}>
         <IconComponent size={24} color={color} strokeWidth={focused ? 2.5 : 2} />
       </Animated.View>
-      <Animated.View style={[styles.activeIndicator, { backgroundColor: color }, animatedIndicatorStyle]} />
     </View>
   );
 }
@@ -117,10 +102,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="profile"
         options={{
-          title: 'Profile',
-          tabBarIcon: ({ color, focused }) => (
-            <TabBarIcon IconComponent={UserIcon} color={color} focused={focused} isDark={isDark} />
-          ),
+          href: null, // Hides the tab from the bottom tab bar to prevent overcrowding. Accessible via Home screen.
         }}
       />
     </Tabs>
