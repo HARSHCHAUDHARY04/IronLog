@@ -4,7 +4,7 @@
 
 import { create } from 'zustand';
 import { User, getUser, saveUser, clearAllData, seedDemoData } from '../lib/storage';
-import { supabase } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import * as WebBrowser from 'expo-web-browser';
 import * as Linking from 'expo-linking';
 
@@ -90,9 +90,69 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  login: async (email: string, _password: string) => {
+  login: async (email: string, password: string) => {
     try {
       set({ isLoading: true });
+
+      if (isSupabaseConfigured) {
+        // Authenticate with live Supabase Auth
+        const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+
+        if (authError) throw authError;
+
+        if (authData?.user) {
+          const sbUser = authData.user;
+          const name = sbUser.user_metadata?.full_name || sbUser.user_metadata?.name || email.split('@')[0];
+          
+          let xp = 0;
+          let level = 1;
+          let badges: string[] = [];
+          let total_workouts = 0;
+          let current_streak = 0;
+          let highest_streak = 0;
+
+          // Fetch profile metadata from profiles table
+          try {
+            const { data: profile } = await supabase
+              .from('profiles')
+              .select('*')
+              .eq('id', sbUser.id)
+              .single();
+
+            if (profile) {
+              xp = profile.xp ?? xp;
+              level = profile.level ?? level;
+              badges = profile.badges ?? badges;
+              total_workouts = profile.total_workouts ?? total_workouts;
+              current_streak = profile.current_streak ?? current_streak;
+              highest_streak = profile.highest_streak ?? highest_streak;
+            }
+          } catch (dbErr) {
+            console.warn('Failed to load profile on standard login:', dbErr);
+          }
+
+          const localUser = await saveUser({
+            id: sbUser.id,
+            email,
+            name,
+            xp,
+            level,
+            badges,
+            total_workouts,
+            current_streak,
+            highest_streak,
+            onboarding_completed: true,
+          });
+
+          set({ user: localUser, isAuthenticated: true, isLoading: false });
+          return true;
+        }
+      }
+
+      // --- MOCK FALLBACK ---
       const existingUser = await getUser();
       if (existingUser && existingUser.email === email) {
         set({ user: existingUser, isAuthenticated: true, isLoading: false });
@@ -102,18 +162,70 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({ user, isAuthenticated: true, isLoading: false });
       return true;
     } catch (e) {
+      console.error('Login Error:', e);
       set({ isLoading: false });
       return false;
     }
   },
 
-  signup: async (email: string, _password: string, name: string) => {
+  signup: async (email: string, password: string, name: string) => {
     try {
       set({ isLoading: true });
+
+      if (isSupabaseConfigured) {
+        // Create user in live Supabase Auth
+        const { data: authData, error: authError } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            data: {
+              full_name: name,
+              username: name.toLowerCase().replace(/\s+/g, '_'),
+            },
+          },
+        });
+
+        if (authError) throw authError;
+
+        if (authData?.user) {
+          const sbUser = authData.user;
+
+          // Locally save user details
+          const localUser = await saveUser({
+            id: sbUser.id,
+            email,
+            name,
+            xp: 0,
+            level: 1,
+            badges: [],
+            onboarding_completed: false,
+          });
+
+          // Seed profile database record (trigger will also trigger, but we upsert to be safe)
+          try {
+            await supabase.from('profiles').upsert({
+              id: sbUser.id,
+              username: name.toLowerCase().replace(/\s+/g, '_'),
+              avatar_url: '',
+              xp: 0,
+              level: 1,
+              badges: [],
+            });
+          } catch (dbErr) {
+            console.warn('Silent fallback on profiles insert during signup:', dbErr);
+          }
+
+          set({ user: localUser, isAuthenticated: true, isLoading: false });
+          return true;
+        }
+      }
+
+      // --- MOCK FALLBACK ---
       const user = await saveUser({ email, name, onboarding_completed: false });
       set({ user, isAuthenticated: true, isLoading: false });
       return true;
     } catch (e) {
+      console.error('Signup Error:', e);
       set({ isLoading: false });
       return false;
     }

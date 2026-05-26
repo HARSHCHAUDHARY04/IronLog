@@ -287,8 +287,13 @@ CREATE TABLE IF NOT EXISTS public.friends (
     user_id_1 UUID REFERENCES public.profiles(id) NOT NULL,
     user_id_2 UUID REFERENCES public.profiles(id) NOT NULL,
     status TEXT CHECK (status IN ('pending', 'accepted')) DEFAULT 'pending',
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    UNIQUE(user_id_1, user_id_2)
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Order-independent unique index for friendships
+CREATE UNIQUE INDEX IF NOT EXISTS unique_friendship_relation ON public.friends (
+    LEAST(user_id_1, user_id_2),
+    GREATEST(user_id_1, user_id_2)
 );
 
 ALTER TABLE public.friends ENABLE ROW LEVEL SECURITY;
@@ -343,3 +348,31 @@ BEGIN
     LIMIT limit_num;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ═══════════════════════════════════════════════════════
+-- 5. TRIGGER FOR AUTOMATIC PROFILE CREATION
+-- ═══════════════════════════════════════════════════════
+
+-- Trigger to automatically create a profile when a new user registers in auth.users
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO public.profiles (id, username, avatar_url, xp, level)
+  VALUES (
+    new.id,
+    COALESCE(
+      new.raw_user_meta_data->>'username', 
+      new.raw_user_meta_data->>'full_name', 
+      split_part(new.email, '@', 1)
+    ),
+    COALESCE(new.raw_user_meta_data->>'avatar_url', ''),
+    0,
+    1
+  );
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE OR REPLACE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
