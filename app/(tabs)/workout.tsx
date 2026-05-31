@@ -10,14 +10,16 @@ import {
   TouchableOpacity,
   StyleSheet,
   TextInput,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from 'expo-router';
 import { Colors, useThemeColor, Spacing, BorderRadius, FontSize, FontWeight, Shadows } from '../../lib/theme';
 import { useWorkoutStore } from '../../stores/workoutStore';
-import { getTemplates, WorkoutTemplate, getWorkouts, Workout } from '../../lib/storage';
+import { getTemplates, WorkoutTemplate, getWorkouts, Workout, deleteTemplate } from '../../lib/storage';
 import { LinearGradient } from 'expo-linear-gradient';
+import Swipeable from 'react-native-gesture-handler/Swipeable';
 
 export default function WorkoutTab() {
   const { colors, text, accent, status, muscle } = useThemeColor();
@@ -65,6 +67,24 @@ export default function WorkoutTab() {
     });
     await startFromTemplate(workout.name, templateExercises);
     router.push('/workout-active');
+  };
+
+  const handleDeleteTemplate = (id: string) => {
+    Alert.alert(
+      "Delete Custom Template",
+      "Are you sure you want to permanently delete this custom workout template?",
+      [
+        { text: "Cancel", style: "cancel" },
+        { 
+          text: "Delete", 
+          style: "destructive", 
+          onPress: async () => {
+            await deleteTemplate(id);
+            await loadData();
+          } 
+        }
+      ]
+    );
   };
 
   const filteredTemplates = searchQuery
@@ -150,30 +170,60 @@ export default function WorkoutTab() {
 
         {/* Templates Section */}
         <Text style={styles.sectionTitle}>Workout Templates</Text>
-        {filteredTemplates.map((template) => (
-          <TouchableOpacity
-            key={template.id}
-            style={styles.templateCard}
-            onPress={() => handleStartTemplate(template)}
-            activeOpacity={0.8}
-          >
-            <View style={styles.templateIcon}>
-              <Text style={styles.templateEmoji}>
-                {muscleGroupIcons[template.muscle_groups[0]] || '⚡'}
-              </Text>
-            </View>
-            <View style={styles.templateInfo}>
-              <Text style={styles.templateName}>{template.name}</Text>
-              <Text style={styles.templateMuscles}>
-                {template.muscle_groups.map(mg => mg.charAt(0).toUpperCase() + mg.slice(1)).join(' • ')}
-              </Text>
-              <Text style={styles.templateExCount}>
-                {template.exercises.length} exercises • {template.exercises.reduce((sum, e) => sum + e.sets, 0)} sets
-              </Text>
-            </View>
-            <Ionicons name="play-circle-outline" size={28} color={accent.red} />
-          </TouchableOpacity>
-        ))}
+        {filteredTemplates.map((template) => {
+          const Card = (
+            <TouchableOpacity
+              style={[styles.templateCard, !template.is_default && { marginBottom: 0 }]}
+              onPress={() => handleStartTemplate(template)}
+              activeOpacity={0.8}
+            >
+              <View style={styles.templateIcon}>
+                <Text style={styles.templateEmoji}>
+                  {muscleGroupIcons[template.muscle_groups[0]] || '⚡'}
+                </Text>
+              </View>
+              <View style={styles.templateInfo}>
+                <Text style={styles.templateName}>{template.name}</Text>
+                <Text style={styles.templateMuscles}>
+                  {template.muscle_groups.map(mg => mg.charAt(0).toUpperCase() + mg.slice(1)).join(' • ')}
+                </Text>
+                <Text style={styles.templateExCount}>
+                  {template.exercises.length} exercises • {template.exercises.reduce((sum, e) => sum + e.sets, 0)} sets
+                </Text>
+              </View>
+              <Ionicons name="play-circle-outline" size={28} color={accent.red} />
+            </TouchableOpacity>
+          );
+
+          if (template.is_default) {
+            return <View key={template.id}>{Card}</View>;
+          }
+
+          return (
+            <Swipeable
+              key={template.id}
+              renderRightActions={() => (
+                <TouchableOpacity
+                  style={{
+                    backgroundColor: accent.red,
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    width: 70,
+                    borderRadius: BorderRadius.lg,
+                    marginBottom: Spacing.sm,
+                    marginLeft: Spacing.sm,
+                  }}
+                  onPress={() => handleDeleteTemplate(template.id)}
+                >
+                  <Ionicons name="trash" size={22} color="#fff" />
+                </TouchableOpacity>
+              )}
+              containerStyle={{ marginBottom: Spacing.sm }}
+            >
+              {Card}
+            </Swipeable>
+          );
+        })}
 
         {/* Recent Workouts */}
         {recentWorkouts.length > 0 && (

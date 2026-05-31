@@ -193,10 +193,27 @@ export const CommonStyles = {
   },
 };
 
+export type ThemeColors = typeof Colors.dark | typeof Colors.light;
+export type TextColors = typeof Colors.text.dark | typeof Colors.text.light;
+export type AccentColors = typeof Colors.accent;
+export type StatusColors = typeof Colors.status;
+export type MuscleColors = typeof Colors.muscle;
+export type GradientColors = typeof Colors.gradients;
+
+export interface ActiveTheme {
+  isDark: boolean;
+  colors: ThemeColors;
+  text: TextColors;
+  accent: AccentColors;
+  status: StatusColors;
+  muscle: MuscleColors;
+  gradients: GradientColors;
+}
+
 import { useSettingsStore } from '../stores/settingsStore';
 import { useColorScheme } from 'react-native';
 
-export const useThemeColor = () => {
+export const useThemeColor = (): ActiveTheme => {
   const { theme } = useSettingsStore();
   const systemTheme = useColorScheme() ?? 'dark';
   

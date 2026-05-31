@@ -16,6 +16,7 @@ import {
   Modal,
   ActivityIndicator,
   TextInput,
+  Alert,
 } from 'react-native';
 import { 
   User, Dumbbell, PlusCircle, Flame, Calendar, 
@@ -23,6 +24,7 @@ import {
   Trophy, Target, ChevronRight, Sparkles
 } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
+import { generateGeminiContent } from '../../lib/gemini';
 import { useFocusEffect } from 'expo-router';
 import Animated, { 
   useSharedValue, 
@@ -103,17 +105,23 @@ export default function HomeScreen() {
         await AsyncStorage.removeItem('ironlog_session_prs');
       }
 
-      // Load persistent daily macros
+      // Load persistent daily macros with midnight auto-reset
       const storedMacros = await AsyncStorage.getItem('ironlog_daily_macros');
-      if (storedMacros) {
+      const storedMacrosDate = await AsyncStorage.getItem('ironlog_daily_macros_date');
+      const todayStr = new Date().toISOString().split('T')[0];
+
+      if (storedMacros && storedMacrosDate === todayStr) {
         setDailyMacros(JSON.parse(storedMacros));
       } else {
-        setDailyMacros({ protein: 0, carbs: 0, fat: 0, calories: 0 });
+        const cleared = { protein: 0, carbs: 0, fat: 0, calories: 0 };
+        setDailyMacros(cleared);
+        await AsyncStorage.setItem('ironlog_daily_macros', JSON.stringify(cleared));
+        await AsyncStorage.setItem('ironlog_daily_macros_date', todayStr);
       }
     } catch (e) {
       console.error('Error loading dashboard data:', e);
     }
-  }, [dailyMacros]);
+  }, []);
 
   const handleScanMeal = async (mealDescription: string) => {
     if (!mealDescription.trim()) return;
@@ -144,7 +152,6 @@ export default function HomeScreen() {
     };
 
     try {
-      const { generateGeminiContent } = require('../../lib/gemini');
       const responseData = await generateGeminiContent(payload);
       const textResponse = responseData?.candidates?.[0]?.content?.parts?.[0]?.text;
       
@@ -161,26 +168,18 @@ export default function HomeScreen() {
         
         setDailyMacros(updated);
         await AsyncStorage.setItem('ironlog_daily_macros', JSON.stringify(updated));
+        await AsyncStorage.setItem('ironlog_daily_macros_date', new Date().toISOString().split('T')[0]);
       }
     } catch (err) {
       console.error(err);
-      const mockResult = {
-        meal_name: mealDescription.split('\n')[0],
-        calories: 450,
-        protein_g: 35,
-        carbs_g: 40,
-        fat_g: 15,
-        coaching_advice: "Meal analyzed successfully! Remember to hit your protein targets to optimize recovery."
-      };
-      setScannedMealResult(mockResult);
-      const updated = {
-        protein: dailyMacros.protein + mockResult.protein_g,
-        carbs: dailyMacros.carbs + mockResult.carbs_g,
-        fat: dailyMacros.fat + mockResult.fat_g,
-        calories: dailyMacros.calories + mockResult.calories,
-      };
-      setDailyMacros(updated);
-      await AsyncStorage.setItem('ironlog_daily_macros', JSON.stringify(updated));
+      Alert.alert(
+        'AI Scanner Unavailable',
+        'Could not analyze the meal. Please make sure your API key is configured or try again later.'
+      );
+      setScannedMealResult({
+        error: true,
+        message: 'Could not connect to Gemini AI services.'
+      });
     } finally {
       setScanningMeal(false);
     }
@@ -741,39 +740,52 @@ export default function HomeScreen() {
                 borderRadius: BorderRadius.lg,
                 padding: 16,
                 borderWidth: 1,
-                borderColor: 'rgba(234, 179, 8, 0.3)',
+                borderColor: scannedMealResult.error ? 'rgba(239, 68, 68, 0.3)' : 'rgba(234, 179, 8, 0.3)',
                 marginBottom: 40
               }}>
-                <Text style={{ color: '#EAB308', fontWeight: 'bold', fontSize: 16, marginBottom: 12 }}>
-                  Gemini Scan Analysis Result:
-                </Text>
-                <Text style={{ color: text.primary, fontWeight: 'bold', fontSize: 15, marginBottom: 8 }}>
-                  Meal: {scannedMealResult.meal_name}
-                </Text>
+                {scannedMealResult.error ? (
+                  <>
+                    <Text style={{ color: '#EF4444', fontWeight: 'bold', fontSize: 16, marginBottom: 8 }}>
+                      Scan Failed
+                    </Text>
+                    <Text style={{ color: text.secondary, fontSize: 13, lineHeight: 18 }}>
+                      {scannedMealResult.message}
+                    </Text>
+                  </>
+                ) : (
+                  <>
+                    <Text style={{ color: '#EAB308', fontWeight: 'bold', fontSize: 16, marginBottom: 12 }}>
+                      Gemini Scan Analysis Result:
+                    </Text>
+                    <Text style={{ color: text.primary, fontWeight: 'bold', fontSize: 15, marginBottom: 8 }}>
+                      Meal: {scannedMealResult.meal_name}
+                    </Text>
 
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 6, marginBottom: 16 }}>
-                  {[
-                    { label: 'Calories', val: `${scannedMealResult.calories} kcal`, color: '#3B82F6' },
-                    { label: 'Protein', val: `${scannedMealResult.protein_g}g`, color: '#EF4444' },
-                    { label: 'Carbs', val: `${scannedMealResult.carbs_g}g`, color: '#10B981' },
-                    { label: 'Fat', val: `${scannedMealResult.fat_g}g`, color: '#F59E0B' }
-                  ].map(macro => (
-                    <View key={macro.label} style={{
-                      flex: 1,
-                      backgroundColor: colors.surfaceHighlight,
-                      borderRadius: BorderRadius.md,
-                      padding: 8,
-                      alignItems: 'center'
-                    }}>
-                      <Text style={{ color: text.tertiary, fontSize: 8, fontWeight: 'bold', textTransform: 'uppercase', marginBottom: 2 }}>{macro.label}</Text>
-                      <Text style={{ color: macro.color, fontSize: 12, fontWeight: 'bold' }}>{macro.val}</Text>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 6, marginBottom: 16 }}>
+                      {[
+                        { label: 'Calories', val: `${scannedMealResult.calories} kcal`, color: '#3B82F6' },
+                        { label: 'Protein', val: `${scannedMealResult.protein_g}g`, color: '#EF4444' },
+                        { label: 'Carbs', val: `${scannedMealResult.carbs_g}g`, color: '#10B981' },
+                        { label: 'Fat', val: `${scannedMealResult.fat_g}g`, color: '#F59E0B' }
+                      ].map(macro => (
+                        <View key={macro.label} style={{
+                          flex: 1,
+                          backgroundColor: colors.surfaceHighlight,
+                          borderRadius: BorderRadius.md,
+                          padding: 8,
+                          alignItems: 'center'
+                        }}>
+                          <Text style={{ color: text.tertiary, fontSize: 8, fontWeight: 'bold', textTransform: 'uppercase', marginBottom: 2 }}>{macro.label}</Text>
+                          <Text style={{ color: macro.color, fontSize: 12, fontWeight: 'bold' }}>{macro.val}</Text>
+                        </View>
+                      ))}
                     </View>
-                  ))}
-                </View>
 
-                <Text style={{ color: text.secondary, fontSize: 13, fontStyle: 'italic', lineHeight: 18 }}>
-                  Coach Tip: "{scannedMealResult.coaching_advice}"
-                </Text>
+                    <Text style={{ color: text.secondary, fontSize: 13, fontStyle: 'italic', lineHeight: 18 }}>
+                      Coach Tip: "{scannedMealResult.coaching_advice}"
+                    </Text>
+                  </>
+                )}
               </Animated.View>
             )}
           </ScrollView>

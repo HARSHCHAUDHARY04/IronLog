@@ -14,6 +14,7 @@ import {
   RefreshControl,
   Platform,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { 
   TrendingUp, TrendingDown, Activity, 
@@ -24,10 +25,11 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { LineChart, BarChart } from 'react-native-gifted-charts';
 import { useThemeColor, Spacing, BorderRadius, FontSize, FontWeight, Shadows } from '../../lib/theme';
-import { getWorkouts, getExerciseHistory, getPRs, getWorkoutStats, Workout, PRRecord } from '../../lib/storage';
+import { getWorkouts, getExerciseHistory, getPRs, getWorkoutStats, Workout, PRRecord, saveTemplate } from '../../lib/storage';
 import { analyzeOverload, type OverloadAnalysis } from '../../lib/overloadEngine';
 import MuscleHeatmap from '../../components/MuscleHeatmap';
 import { LinearGradient } from 'expo-linear-gradient';
+import { generateGeminiContent } from '../../lib/gemini';
 
 const { width } = Dimensions.get('window');
 
@@ -118,7 +120,6 @@ export default function AnalyticsScreen() {
     };
 
     try {
-      const { generateGeminiContent } = require('../../lib/gemini');
       const responseData = await generateGeminiContent(payload);
       const textResponse = responseData?.candidates?.[0]?.content?.parts?.[0]?.text;
       
@@ -128,23 +129,18 @@ export default function AnalyticsScreen() {
       }
     } catch (err) {
       console.error(err);
-      const mockAudit = {
-        plateau_detected: true,
-        exercise_name: "Barbell Bench Press",
-        analysis_report: "Stabilizer fatigue detected in anterior deltoids and triceps. Estimated 1RM progression has slowed.",
-        recommended_action: "switch_variation",
-        ai_workout_template: {
-          name: "Bench Press Breakthrough",
-          muscle_groups: ["chest", "triceps"],
-          exercises: [
-            { name: "Incline Dumbbell Press", sets: 3, reps: 8 },
-            { name: "Close-Grip Bench Press", sets: 3, reps: 6 },
-            { name: "Weighted Chest Dips", sets: 3, reps: 8 },
-            { name: "Overhead Dumbbell Extension", sets: 3, reps: 10 }
-          ]
-        }
-      };
-      setPlateauResult(mockAudit);
+      if (Platform.OS === 'web') {
+        window.alert("Plateau Solver Unavailable: Could not contact AI services.");
+      } else {
+        Alert.alert(
+          "AI Solver Unavailable",
+          "Could not analyze plateau data. Please check your network or try again later."
+        );
+      }
+      setPlateauResult({
+        error: true,
+        message: "AI Plateau analysis is currently offline. Please check back later."
+      });
     } finally {
       setAuditingPlateaus(false);
     }
@@ -155,7 +151,6 @@ export default function AnalyticsScreen() {
     setSavingBreakthrough(true);
     
     try {
-      const { saveTemplate } = require('../../lib/storage');
       await saveTemplate({
         user_id: 'default_user',
         name: `AI: ${plateauResult.ai_workout_template.name}`,
@@ -167,7 +162,6 @@ export default function AnalyticsScreen() {
       if (Platform.OS === 'web') {
         window.alert("Plateau Solver Workout Saved!");
       } else {
-        const { Alert } = require('react-native');
         Alert.alert("Breakthrough Session Saved", "Added successfully to your routine templates list!", [{ text: "Awesome!" }]);
       }
     } catch (e) {
@@ -192,12 +186,13 @@ export default function AnalyticsScreen() {
     }
   }, []);
 
-  const loadExerciseChart = async (exerciseName: string) => {
+  const loadExerciseChart = async (exerciseName: string, rangeOverride?: typeof timeRange) => {
     const history = await getExerciseHistory(exerciseName);
+    const activeRange = rangeOverride || timeRange;
     
     const now = new Date();
     let cutoff = new Date(0);
-    switch (timeRange) {
+    switch (activeRange) {
       case '4W': cutoff = new Date(now.getTime() - 28 * 24 * 60 * 60 * 1000); break;
       case '3M': cutoff = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000); break;
       case '6M': cutoff = new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000); break;
@@ -206,13 +201,14 @@ export default function AnalyticsScreen() {
     }
 
     const filtered = history.filter(h => new Date(h.workout_date) >= cutoff);
+    const reversedHistory = [...filtered].reverse();
     
-    setChartData(filtered.reverse().map(h => ({
+    setChartData(reversedHistory.map(h => ({
       label: new Date(h.workout_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
       value: h.best_1rm,
     })));
 
-    const analysis = analyzeOverload(filtered.reverse().map(h => ({
+    const analysis = analyzeOverload(reversedHistory.map(h => ({
       workout_date: h.workout_date,
       sets: h.sets,
       best_1rm: h.best_1rm,
@@ -231,7 +227,7 @@ export default function AnalyticsScreen() {
   const handleTimeRangeChange = async (range: typeof timeRange) => {
     setTimeRange(range);
     if (selectedExercise) {
-      await loadExerciseChart(selectedExercise);
+      await loadExerciseChart(selectedExercise, range);
     }
   };
 
@@ -689,95 +685,117 @@ export default function AnalyticsScreen() {
             {/* Diagnostics Report & Breakthrough Workout */}
             {plateauResult && (
               <View>
-                {/* Diagnostics Header Badge */}
-                <View style={{
-                  flexDirection: 'row',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  backgroundColor: 'rgba(234, 179, 8, 0.1)',
-                  borderRadius: BorderRadius.md,
-                  padding: 12,
-                  borderWidth: 1,
-                  borderColor: 'rgba(234, 179, 8, 0.3)',
-                  marginBottom: 16
-                }}>
-                  <View>
-                    <Text style={{ color: text.tertiary, fontSize: 9, fontWeight: 'bold', textTransform: 'uppercase' }}>
-                      AUDITED EXERCISE
-                    </Text>
-                    <Text style={{ color: '#FFFFFF', fontWeight: 'bold', fontSize: 15 }}>
-                      {plateauResult.exercise_name}
-                    </Text>
-                  </View>
+                {plateauResult.error ? (
                   <View style={{
-                    backgroundColor: plateauResult.recommended_action === 'deload' ? '#EF4444' : '#EAB308',
-                    paddingHorizontal: 10,
-                    paddingVertical: 4,
-                    borderRadius: 8
+                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                    borderRadius: BorderRadius.md,
+                    padding: 16,
+                    borderWidth: 1,
+                    borderColor: 'rgba(239, 68, 68, 0.3)',
+                    marginBottom: 20
                   }}>
-                    <Text style={{ color: '#1E1B18', fontWeight: 'bold', fontSize: 10, textTransform: 'uppercase' }}>
-                      {plateauResult.recommended_action.replace('_', ' ')}
+                    <Text style={{ color: '#EF4444', fontWeight: 'bold', fontSize: 16, marginBottom: 8 }}>
+                      Plateau Analysis Failed
+                    </Text>
+                    <Text style={{ color: text.secondary, fontSize: 13, lineHeight: 18 }}>
+                      {plateauResult.message}
                     </Text>
                   </View>
-                </View>
-
-                {/* Biomechanical Analysis Report */}
-                <Text style={{ color: text.secondary, fontSize: 13, lineHeight: 18, marginBottom: 20 }}>
-                  <Text style={{ color: '#EAB308', fontWeight: 'bold' }}>AI Audit Analysis: </Text>
-                  "{plateauResult.analysis_report}"
-                </Text>
-
-                {/* AI Breakthrough Workout Routine Card */}
-                <View style={{
-                  backgroundColor: colors.surfaceHighlight,
-                  borderRadius: BorderRadius.md,
-                  padding: 14,
-                  borderWidth: 1,
-                  borderColor: colors.border,
-                  marginBottom: 20
-                }}>
-                  <Text style={{ color: '#EAB308', fontWeight: 'bold', fontSize: 12, textTransform: 'uppercase', marginBottom: 10 }}>
-                    Breakthrough Workout Session
-                  </Text>
-                  <Text style={{ color: text.primary, fontWeight: 'bold', fontSize: 15, marginBottom: 12 }}>
-                    Session: {plateauResult.ai_workout_template.name}
-                  </Text>
-
-                  {/* Exercises list */}
-                  <View style={{ gap: 8, marginBottom: 14 }}>
-                    {plateauResult.ai_workout_template.exercises.map((ex: any, idx: number) => (
-                      <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <Text style={{ color: text.primary, fontSize: 13 }}>{ex.name}</Text>
-                        <Text style={{ color: text.secondary, fontSize: 12, fontWeight: '600' }}>
-                          {ex.sets} sets × {ex.reps} reps
+                ) : (
+                  <>
+                    {/* Diagnostics Header Badge */}
+                    <View style={{
+                      flexDirection: 'row',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      backgroundColor: 'rgba(234, 179, 8, 0.1)',
+                      borderRadius: BorderRadius.md,
+                      padding: 12,
+                      borderWidth: 1,
+                      borderColor: 'rgba(234, 179, 8, 0.3)',
+                      marginBottom: 16
+                    }}>
+                      <View>
+                        <Text style={{ color: text.tertiary, fontSize: 9, fontWeight: 'bold', textTransform: 'uppercase' }}>
+                          AUDITED EXERCISE
+                        </Text>
+                        <Text style={{ color: '#FFFFFF', fontWeight: 'bold', fontSize: 15 }}>
+                          {plateauResult.exercise_name}
                         </Text>
                       </View>
-                    ))}
-                  </View>
+                      <View style={{
+                        backgroundColor: plateauResult.recommended_action === 'deload' ? '#EF4444' : '#EAB308',
+                        paddingHorizontal: 10,
+                        paddingVertical: 4,
+                        borderRadius: 8
+                      }}>
+                        <Text style={{ color: '#1E1B18', fontWeight: 'bold', fontSize: 10, textTransform: 'uppercase' }}>
+                          {plateauResult.recommended_action.replace('_', ' ')}
+                        </Text>
+                      </View>
+                    </View>
 
-                  <TouchableOpacity
-                    style={{
-                      backgroundColor: '#EAB308',
-                      borderRadius: 8,
-                      paddingVertical: 10,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      flexDirection: 'row',
-                      gap: 6
-                    }}
-                    onPress={handleSaveBreakthroughWorkout}
-                    disabled={savingBreakthrough}
-                  >
-                    {savingBreakthrough ? (
-                      <ActivityIndicator color="#1E1B18" />
-                    ) : (
-                      <>
-                        <Plus size={16} color="#1E1B18" strokeWidth={3} />
-                        <Text style={{ color: '#1E1B18', fontWeight: 'bold', fontSize: 13 }}>Save Breakthrough Workout</Text>
-                      </>
-                    )}
-                  </TouchableOpacity>
-                </View>
+                    {/* Biomechanical Analysis Report */}
+                    <Text style={{ color: text.secondary, fontSize: 13, lineHeight: 18, marginBottom: 20 }}>
+                      <Text style={{ color: '#EAB308', fontWeight: 'bold' }}>AI Audit Analysis: </Text>
+                      "{plateauResult.analysis_report}"
+                    </Text>
+                  </>
+                )}
+
+                {/* AI Breakthrough Workout Routine Card */}
+                {!plateauResult.error && plateauResult.ai_workout_template && (
+                  <View style={{
+                    backgroundColor: colors.surfaceHighlight,
+                    borderRadius: BorderRadius.md,
+                    padding: 14,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                    marginBottom: 20
+                  }}>
+                    <Text style={{ color: '#EAB308', fontWeight: 'bold', fontSize: 12, textTransform: 'uppercase', marginBottom: 10 }}>
+                      Breakthrough Workout Session
+                    </Text>
+                    <Text style={{ color: text.primary, fontWeight: 'bold', fontSize: 15, marginBottom: 12 }}>
+                      Session: {plateauResult.ai_workout_template.name}
+                    </Text>
+
+                    {/* Exercises list */}
+                    <View style={{ gap: 8, marginBottom: 14 }}>
+                      {plateauResult.ai_workout_template.exercises.map((ex: any, idx: number) => (
+                        <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <Text style={{ color: text.primary, fontSize: 13 }}>{ex.name}</Text>
+                          <Text style={{ color: text.secondary, fontSize: 12, fontWeight: '600' }}>
+                            {ex.sets} sets × {ex.reps} reps
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+
+                    <TouchableOpacity
+                      style={{
+                        backgroundColor: '#EAB308',
+                        borderRadius: 8,
+                        paddingVertical: 10,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        flexDirection: 'row',
+                        gap: 6
+                      }}
+                      onPress={handleSaveBreakthroughWorkout}
+                      disabled={savingBreakthrough}
+                    >
+                      {savingBreakthrough ? (
+                        <ActivityIndicator color="#1E1B18" />
+                      ) : (
+                        <>
+                          <Plus size={16} color="#1E1B18" strokeWidth={3} />
+                          <Text style={{ color: '#1E1B18', fontWeight: 'bold', fontSize: 13 }}>Save Breakthrough Workout</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                )}
 
                 {/* Run Audit Again */}
                 <TouchableOpacity

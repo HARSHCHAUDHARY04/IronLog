@@ -10,6 +10,7 @@ import {
   TouchableOpacity,
   StyleSheet,
   RefreshControl,
+  Alert,
 } from 'react-native';
 import { 
   ChevronLeft, ChevronRight, Dumbbell, 
@@ -18,7 +19,7 @@ import {
 import { useFocusEffect } from 'expo-router';
 import Animated, { FadeInDown, Layout } from 'react-native-reanimated';
 import { useThemeColor, Spacing, BorderRadius, FontSize, FontWeight, Shadows } from '../../lib/theme';
-import { getWorkouts, getWorkoutDatesForMonth, Workout } from '../../lib/storage';
+import { getWorkouts, getWorkoutDatesForMonth, Workout, deleteWorkout } from '../../lib/storage';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { LinearGradient } from 'expo-linear-gradient';
 
@@ -48,6 +49,25 @@ export default function HistoryScreen() {
     setRefreshing(true);
     await loadData();
     setRefreshing(false);
+  };
+
+  const handleDeleteWorkout = async (id: string) => {
+    Alert.alert(
+      "Delete Workout",
+      "Are you sure you want to permanently delete this workout session? This cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { 
+          text: "Delete", 
+          style: "destructive", 
+          onPress: async () => {
+            await deleteWorkout(id);
+            setSelectedWorkout(null);
+            await loadData();
+          } 
+        }
+      ]
+    );
   };
 
   // Calendar helpers
@@ -251,6 +271,24 @@ export default function HistoryScreen() {
                           </View>
                         );
                       })}
+
+                      <TouchableOpacity
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                          borderWidth: 1,
+                          borderColor: 'rgba(239, 68, 68, 0.3)',
+                          borderRadius: BorderRadius.md,
+                          paddingVertical: 10,
+                          marginTop: Spacing.md,
+                          gap: 6
+                        }}
+                        onPress={() => handleDeleteWorkout(workout.id)}
+                      >
+                        <Text style={{ color: '#EF4444', fontWeight: 'bold', fontSize: 13 }}>Delete Workout Session</Text>
+                      </TouchableOpacity>
                     </Animated.View>
                   )}
                 </TouchableOpacity>

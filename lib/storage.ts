@@ -5,11 +5,24 @@
 // ═══════════════════════════════════════════════════════
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { v4 as uuidv4 } from 'uuid';
+import { supabase, isSupabaseConfigured } from './supabase';
 
-// Generate simple unique IDs without uuid dependency issues
+// Generate a standard RFC4122 version 4 compliant UUID
 function generateId(): string {
-  return Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+// Helper to ensure an ID is a valid UUID, generating one if it isn't
+function ensureUUID(id: string): string {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (uuidRegex.test(id)) {
+    return id;
+  }
+  return generateId();
 }
 
 // ───────────────────────────────────────────────────────
@@ -120,6 +133,50 @@ const KEYS = {
 // ───────────────────────────────────────────────────────
 
 export async function getUser(): Promise<User | null> {
+  if (isSupabaseConfigured) {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        const { data: profile, error: pError } = await supabase
+          .from('profiles')
+          .select('id, username, created_at, xp, level, current_streak, highest_streak, total_workouts, badges')
+          .eq('id', session.user.id)
+          .single();
+        
+        if (!pError && profile) {
+          // Fetch demographics from users table
+          const { data: userData } = await supabase
+            .from('users')
+            .select('age, weight_kg, height_cm, goal, onboarding_completed')
+            .eq('id', session.user.id)
+            .single();
+
+          const user: User = {
+            id: profile.id,
+            name: profile.username || '',
+            email: session.user.email || '',
+            age: userData?.age || undefined,
+            weight_kg: userData?.weight_kg ? Number(userData.weight_kg) : undefined,
+            height_cm: userData?.height_cm ? Number(userData.height_cm) : undefined,
+            goal: (userData?.goal as any) || 'general_fitness',
+            onboarding_completed: userData?.onboarding_completed ?? true,
+            xp: profile.xp || 0,
+            level: profile.level || 1,
+            current_streak: profile.current_streak || 0,
+            highest_streak: profile.highest_streak || 0,
+            total_workouts: profile.total_workouts || 0,
+            badges: profile.badges || [],
+            created_at: profile.created_at || new Date().toISOString(),
+          };
+          await AsyncStorage.setItem(KEYS.USER, JSON.stringify(user));
+          return user;
+        }
+      }
+    } catch (e) {
+      console.error('Supabase getUser failed, using local fallback:', e);
+    }
+  }
+
   const data = await AsyncStorage.getItem(KEYS.USER);
   return data ? JSON.parse(data) : null;
 }
@@ -144,6 +201,43 @@ export async function saveUser(user: Partial<User>): Promise<User> {
     created_at: existing?.created_at || new Date().toISOString(),
   };
   await AsyncStorage.setItem(KEYS.USER, JSON.stringify(updated));
+
+  if (isSupabaseConfigured) {
+    try {
+      // First upsert to users table to satisfy foreign keys
+      const { error: userError } = await supabase.from('users').upsert({
+        id: updated.id,
+        name: updated.name,
+        email: updated.email,
+        age: updated.age,
+        weight_kg: updated.weight_kg,
+        height_cm: updated.height_cm,
+        goal: updated.goal,
+        onboarding_completed: updated.onboarding_completed,
+      });
+      if (userError) {
+        console.error('Supabase upsert users failed:', userError);
+      }
+
+      // Then upsert to profiles table
+      const { error: profileError } = await supabase.from('profiles').upsert({
+        id: updated.id,
+        username: updated.name,
+        xp: updated.xp,
+        level: updated.level,
+        current_streak: updated.current_streak,
+        highest_streak: updated.highest_streak,
+        total_workouts: updated.total_workouts,
+        badges: updated.badges,
+      });
+      if (profileError) {
+        console.error('Supabase upsert profiles failed:', profileError);
+      }
+    } catch (e) {
+      console.error('Supabase saveUser failed:', e);
+    }
+  }
+
   return updated;
 }
 
@@ -152,6 +246,68 @@ export async function saveUser(user: Partial<User>): Promise<User> {
 // ───────────────────────────────────────────────────────
 
 export async function getWorkouts(): Promise<Workout[]> {
+  if (isSupabaseConfigured) {
+    try {
+      const { data, error } = await supabase
+        .from('workouts')
+        .select(`
+          id,
+          user_id,
+          workout_date,
+          name,
+          muscle_groups,
+          duration_minutes,
+          notes,
+          total_volume_kg,
+          created_at,
+          exercises (
+            id,
+            workout_id,
+            exercise_name,
+            set_number,
+            reps,
+            weight_kg,
+            rpe,
+            is_warmup,
+            estimated_1rm,
+            notes
+          )
+        `)
+        .order('workout_date', { ascending: false });
+
+      if (!error && data) {
+        const formatted: Workout[] = (data as any[]).map(w => ({
+          id: w.id,
+          user_id: w.user_id,
+          workout_date: w.workout_date,
+          name: w.name,
+          muscle_groups: w.muscle_groups || [],
+          duration_minutes: w.duration_minutes || 0,
+          notes: w.notes || '',
+          total_volume_kg: Number(w.total_volume_kg) || 0,
+          created_at: w.created_at,
+          exercises: (w.exercises || []).map((e: any) => ({
+            id: e.id,
+            workout_id: e.workout_id,
+            exercise_name: e.exercise_name,
+            set_number: e.set_number,
+            reps: e.reps,
+            weight_kg: Number(e.weight_kg) || 0,
+            rpe: e.rpe ? Number(e.rpe) : undefined,
+            is_warmup: e.is_warmup || false,
+            estimated_1rm: Number(e.estimated_1rm) || 0,
+            notes: e.notes || '',
+          })),
+        }));
+
+        await AsyncStorage.setItem(KEYS.WORKOUTS, JSON.stringify(formatted));
+        return formatted;
+      }
+    } catch (e) {
+      console.error('Supabase getWorkouts failed, using local fallback:', e);
+    }
+  }
+
   const data = await AsyncStorage.getItem(KEYS.WORKOUTS);
   const workouts: Workout[] = data ? JSON.parse(data) : [];
   return workouts.sort((a, b) => new Date(b.workout_date).getTime() - new Date(a.workout_date).getTime());
@@ -163,14 +319,60 @@ export async function getWorkoutById(id: string): Promise<Workout | null> {
 }
 
 export async function saveWorkout(workout: Omit<Workout, 'id' | 'created_at'>): Promise<Workout> {
-  const workouts = await getWorkouts();
   const newWorkout: Workout = {
     ...workout,
     id: generateId(),
     created_at: new Date().toISOString(),
   };
+
+  // Ensure all exercise IDs are valid UUIDs
+  newWorkout.exercises = newWorkout.exercises.map(e => ({
+    ...e,
+    id: ensureUUID(e.id),
+    workout_id: newWorkout.id,
+  }));
+
+  const workouts = await getWorkouts();
   workouts.push(newWorkout);
   await AsyncStorage.setItem(KEYS.WORKOUTS, JSON.stringify(workouts));
+
+  if (isSupabaseConfigured) {
+    try {
+      const { error: wError } = await supabase.from('workouts').insert({
+        id: newWorkout.id,
+        user_id: newWorkout.user_id,
+        workout_date: newWorkout.workout_date,
+        name: newWorkout.name,
+        muscle_groups: newWorkout.muscle_groups,
+        duration_minutes: newWorkout.duration_minutes,
+        notes: newWorkout.notes,
+        total_volume_kg: newWorkout.total_volume_kg,
+        created_at: newWorkout.created_at,
+      });
+
+      if (wError) {
+        console.error('Supabase parent saveWorkout failed:', wError);
+      } else {
+        const exercisesToInsert = newWorkout.exercises.map(e => ({
+          id: e.id,
+          workout_id: newWorkout.id,
+          exercise_name: e.exercise_name,
+          set_number: e.set_number,
+          reps: e.reps,
+          weight_kg: e.weight_kg,
+          rpe: e.rpe,
+          is_warmup: e.is_warmup,
+          notes: e.notes,
+        }));
+
+        const { error: exError } = await supabase.from('exercises').insert(exercisesToInsert);
+        if (exError) console.error('Supabase child exercises save failed:', exError);
+      }
+    } catch (e) {
+      console.error('Supabase saveWorkout exception:', e);
+    }
+  }
+
   return newWorkout;
 }
 
@@ -178,6 +380,14 @@ export async function deleteWorkout(id: string): Promise<void> {
   const workouts = await getWorkouts();
   const filtered = workouts.filter(w => w.id !== id);
   await AsyncStorage.setItem(KEYS.WORKOUTS, JSON.stringify(filtered));
+
+  if (isSupabaseConfigured) {
+    try {
+      await supabase.from('workouts').delete().eq('id', id);
+    } catch (e) {
+      console.error('Supabase deleteWorkout failed:', e);
+    }
+  }
 }
 
 export async function getExerciseHistory(exerciseName: string): Promise<{
@@ -322,16 +532,67 @@ export async function getWorkoutDatesForMonth(year: number, month: number): Prom
 // ───────────────────────────────────────────────────────
 
 export async function getProgressEntries(): Promise<ProgressEntry[]> {
+  if (isSupabaseConfigured) {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        const { data, error } = await supabase
+          .from('progress')
+          .select('*')
+          .eq('user_id', session.user.id)
+          .order('date', { ascending: false });
+
+        if (!error && data) {
+          const formatted: ProgressEntry[] = (data as any[]).map(pe => ({
+            id: pe.id,
+            user_id: pe.user_id,
+            body_weight: Number(pe.body_weight) || 0,
+            date: pe.date,
+            notes: pe.notes || '',
+          }));
+
+          await AsyncStorage.setItem(KEYS.PROGRESS, JSON.stringify(formatted));
+          return formatted;
+        }
+      }
+    } catch (e) {
+      console.error('Supabase getProgressEntries failed, using local fallback:', e);
+    }
+  }
+
   const data = await AsyncStorage.getItem(KEYS.PROGRESS);
   const entries: ProgressEntry[] = data ? JSON.parse(data) : [];
   return entries.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 }
 
 export async function saveProgressEntry(entry: Omit<ProgressEntry, 'id'>): Promise<ProgressEntry> {
-  const entries = await getProgressEntries();
   const newEntry: ProgressEntry = { ...entry, id: generateId() };
+
+  // 1. Optimistic local update
+  const entries = await getProgressEntries();
   entries.push(newEntry);
   await AsyncStorage.setItem(KEYS.PROGRESS, JSON.stringify(entries));
+
+  // 2. Sync to Supabase in background
+  if (isSupabaseConfigured) {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        const supabaseProgress = {
+          id: newEntry.id,
+          user_id: session.user.id,
+          body_weight: newEntry.body_weight,
+          date: newEntry.date,
+          notes: newEntry.notes || null,
+        };
+
+        await supabase.from('progress').upsert(supabaseProgress);
+      }
+    } catch (e) {
+      console.error('Supabase saveProgressEntry failed:', e);
+    }
+  }
+
   return newEntry;
 }
 
@@ -340,16 +601,75 @@ export async function saveProgressEntry(entry: Omit<ProgressEntry, 'id'>): Promi
 // ───────────────────────────────────────────────────────
 
 export async function getPRs(): Promise<PRRecord[]> {
+  if (isSupabaseConfigured) {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        const { data, error } = await supabase
+          .from('personal_records')
+          .select('*')
+          .eq('user_id', session.user.id)
+          .order('achieved_at', { ascending: false });
+
+        if (!error && data) {
+          const formatted: PRRecord[] = (data as any[]).map(pr => ({
+            id: pr.id,
+            user_id: pr.user_id,
+            exercise_name: pr.exercise_name,
+            record_type: pr.record_type,
+            value: Number(pr.value) || 0,
+            previous_value: pr.previous_value ? Number(pr.previous_value) : undefined,
+            improvement_pct: pr.improvement_pct ? Number(pr.improvement_pct) : undefined,
+            achieved_at: pr.achieved_at,
+            workout_id: pr.workout_id || '',
+          }));
+
+          await AsyncStorage.setItem(KEYS.PRS, JSON.stringify(formatted));
+          return formatted;
+        }
+      }
+    } catch (e) {
+      console.error('Supabase getPRs failed, using local fallback:', e);
+    }
+  }
+
   const data = await AsyncStorage.getItem(KEYS.PRS);
   const prs: PRRecord[] = data ? JSON.parse(data) : [];
   return prs.sort((a, b) => new Date(b.achieved_at).getTime() - new Date(a.achieved_at).getTime());
 }
 
 export async function savePR(pr: Omit<PRRecord, 'id'>): Promise<PRRecord> {
-  const prs = await getPRs();
   const newPR: PRRecord = { ...pr, id: generateId() };
+
+  // 1. Optimistic local update
+  const prs = await getPRs();
   prs.push(newPR);
   await AsyncStorage.setItem(KEYS.PRS, JSON.stringify(prs));
+
+  // 2. Sync to Supabase in background
+  if (isSupabaseConfigured) {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        const supabasePR = {
+          id: newPR.id,
+          user_id: session.user.id,
+          exercise_name: newPR.exercise_name,
+          record_type: newPR.record_type,
+          value: newPR.value,
+          previous_value: newPR.previous_value || null,
+          improvement_pct: newPR.improvement_pct || null,
+          achieved_at: newPR.achieved_at,
+          workout_id: newPR.workout_id || null, // Map empty string to null to satisfy foreign key
+        };
+
+        await supabase.from('personal_records').upsert(supabasePR);
+      }
+    } catch (e) {
+      console.error('Supabase savePR failed:', e);
+    }
+  }
+
   return newPR;
 }
 
@@ -375,10 +695,7 @@ export async function getBestPRForExercise(exerciseName: string): Promise<{
 // ───────────────────────────────────────────────────────
 
 export async function getTemplates(): Promise<WorkoutTemplate[]> {
-  const data = await AsyncStorage.getItem(KEYS.TEMPLATES);
-  if (data) return JSON.parse(data);
-
-  // Return default templates
+  // Define default system-level templates
   const defaults: WorkoutTemplate[] = [
     {
       id: 'default-push',
@@ -473,16 +790,96 @@ export async function getTemplates(): Promise<WorkoutTemplate[]> {
     },
   ];
 
+  if (isSupabaseConfigured) {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        const { data, error } = await supabase
+          .from('workout_templates')
+          .select('*')
+          .eq('user_id', session.user.id);
+
+        if (!error && data) {
+          const customTemplates: WorkoutTemplate[] = (data as any[]).map(t => ({
+            id: t.id,
+            user_id: t.user_id,
+            name: t.name,
+            muscle_groups: t.muscle_groups || [],
+            exercises: Array.isArray(t.exercises) ? t.exercises : JSON.parse(t.exercises || '[]'),
+            is_default: t.is_default || false,
+          }));
+
+          const combined = [...defaults, ...customTemplates];
+          await AsyncStorage.setItem(KEYS.TEMPLATES, JSON.stringify(combined));
+          return combined;
+        }
+      }
+    } catch (e) {
+      console.error('Supabase getTemplates failed, using local fallback:', e);
+    }
+  }
+
+  const data = await AsyncStorage.getItem(KEYS.TEMPLATES);
+  if (data) {
+    // Make sure we have the defaults if the storage is empty or somehow corrupted
+    const parsed = JSON.parse(data) as WorkoutTemplate[];
+    const custom = parsed.filter(t => !t.is_default);
+    return [...defaults, ...custom];
+  }
+
   await AsyncStorage.setItem(KEYS.TEMPLATES, JSON.stringify(defaults));
   return defaults;
 }
 
 export async function saveTemplate(template: Omit<WorkoutTemplate, 'id'>): Promise<WorkoutTemplate> {
+  const newTemplate: WorkoutTemplate = {
+    ...template,
+    id: generateId(),
+  };
+
+  // 1. Optimistic local update
   const templates = await getTemplates();
-  const newTemplate: WorkoutTemplate = { ...template, id: generateId() };
   templates.push(newTemplate);
   await AsyncStorage.setItem(KEYS.TEMPLATES, JSON.stringify(templates));
+
+  // 2. Sync to Supabase in background
+  if (isSupabaseConfigured) {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        const supabaseTemplate = {
+          id: newTemplate.id,
+          user_id: session.user.id,
+          name: newTemplate.name,
+          muscle_groups: newTemplate.muscle_groups,
+          exercises: newTemplate.exercises, // JSONB
+          is_default: newTemplate.is_default,
+        };
+
+        await supabase.from('workout_templates').upsert(supabaseTemplate);
+      }
+    } catch (e) {
+      console.error('Supabase saveTemplate failed:', e);
+    }
+  }
+
   return newTemplate;
+}
+
+export async function deleteTemplate(id: string): Promise<void> {
+  // 1. Optimistic local deletion
+  const templates = await getTemplates();
+  const updated = templates.filter(t => t.id !== id);
+  await AsyncStorage.setItem(KEYS.TEMPLATES, JSON.stringify(updated));
+
+  // 2. Sync deletion to Supabase
+  if (isSupabaseConfigured && !id.startsWith('default-')) {
+    try {
+      await supabase.from('workout_templates').delete().eq('id', id);
+    } catch (e) {
+      console.error('Supabase deleteTemplate failed:', e);
+    }
+  }
 }
 
 // ───────────────────────────────────────────────────────
@@ -524,7 +921,6 @@ export async function seedDemoData(): Promise<void> {
 
   for (let day = 30; day >= 0; day -= 2) {
     const workoutDate = new Date(today);
-    dateStrStr: // dummy for local scope
     workoutDate.setDate(today.getDate() - day);
     const dateStr = workoutDate.toISOString().split('T')[0];
 

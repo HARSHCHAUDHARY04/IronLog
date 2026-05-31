@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Platform, KeyboardAvoidingView } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Platform, KeyboardAvoidingView, Alert, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, useThemeColor, Spacing, BorderRadius, FontSize, FontWeight } from '../../lib/theme';
 import { useAuthStore } from '../../stores/authStore';
 import { Sparkles, Send, Brain, Bot, Volume2, VolumeX, Mic } from 'lucide-react-native';
 import * as Speech from 'expo-speech';
 import MarkdownText from '../../components/MarkdownText';
+import { getAICoachingAdvice } from '../../lib/gemini';
+import { fetchGlobalLeaderboard, fetchFriends, searchUsers, addFriend, removeFriend } from '../../lib/social';
 
 export default function CommunityScreen() {
   const { colors, text, accent, status, muscle } = useThemeColor();
@@ -92,7 +94,6 @@ export default function CommunityScreen() {
   const toggleListening = () => {
     if (!recognition) {
       if (Platform.OS !== 'web') {
-        const { Alert } = require('react-native');
         Alert.alert(
           "Mobile Voice Typing Dictation",
           "For high-accuracy voice input on iOS and Android:\n\n1. Tap the text input field.\n2. When the keyboard opens, tap the keyboard microphone button (🎤) next to your space bar!\n\nThis system-level dictation is fast, offline-capable, and works natively.",
@@ -222,7 +223,6 @@ export default function CommunityScreen() {
     setIsAIResponding(true);
 
     try {
-      const { getAICoachingAdvice } = require('../../lib/gemini');
       const response = await getAICoachingAdvice(textToSend);
       
       setMessages(prev => [...prev, {
@@ -249,14 +249,15 @@ export default function CommunityScreen() {
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
   const [friends, setFriends] = useState<any[]>([]);
   const [isLoadingSocial, setIsLoadingSocial] = useState(false);
+  const [socialError, setSocialError] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isSearchMode, setIsSearchMode] = useState(false);
 
   const loadSocialData = async () => {
     setIsLoadingSocial(true);
+    setSocialError(false);
     try {
-      const { fetchGlobalLeaderboard, fetchFriends } = require('../../lib/social');
       const [lb, fr] = await Promise.all([
         fetchGlobalLeaderboard(20),
         fetchFriends()
@@ -265,6 +266,7 @@ export default function CommunityScreen() {
       setFriends(fr);
     } catch (e) {
       console.error('Failed to load social data:', e);
+      setSocialError(true);
     } finally {
       setIsLoadingSocial(false);
     }
@@ -283,7 +285,6 @@ export default function CommunityScreen() {
       return;
     }
     try {
-      const { searchUsers } = require('../../lib/social');
       const res = await searchUsers(val);
       setSearchResults(res);
     } catch (e) {
@@ -293,7 +294,6 @@ export default function CommunityScreen() {
 
   const handleAddFriend = async (friendId: string) => {
     try {
-      const { addFriend } = require('../../lib/social');
       const success = await addFriend(friendId);
       if (success) {
         await loadSocialData();
@@ -301,7 +301,6 @@ export default function CommunityScreen() {
         if (Platform.OS === 'web') {
           alert("Friend added successfully!");
         } else {
-          const { Alert } = require('react-native');
           Alert.alert("Success", "Friend added successfully!");
         }
       }
@@ -312,14 +311,12 @@ export default function CommunityScreen() {
 
   const handleRemoveFriend = async (friendId: string) => {
     try {
-      const { removeFriend } = require('../../lib/social');
       const success = await removeFriend(friendId);
       if (success) {
         await loadSocialData();
         if (Platform.OS === 'web') {
           alert("Friend removed successfully.");
         } else {
-          const { Alert } = require('react-native');
           Alert.alert("Removed", "Friend removed successfully.");
         }
       }
@@ -352,8 +349,19 @@ export default function CommunityScreen() {
             <View>
               <Text style={styles.sectionTitle}>Global Leaderboard</Text>
               {isLoadingSocial && leaderboard.length === 0 ? (
-                <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+                <View style={{ paddingVertical: 40, alignItems: 'center', gap: 12 }}>
+                  <ActivityIndicator size="small" color={accent.red} />
                   <Text style={{ color: text.tertiary, fontStyle: 'italic' }}>Loading Leaderboard...</Text>
+                </View>
+              ) : socialError && leaderboard.length === 0 ? (
+                <View style={{ paddingVertical: 40, alignItems: 'center', gap: 12 }}>
+                  <Text style={{ color: '#EF4444', fontStyle: 'italic' }}>Failed to load leaderboard.</Text>
+                  <TouchableOpacity 
+                    style={{ backgroundColor: colors.surfaceHighlight, paddingVertical: 8, paddingHorizontal: 16, borderRadius: BorderRadius.md }}
+                    onPress={loadSocialData}
+                  >
+                    <Text style={{ color: text.primary, fontWeight: 'bold', fontSize: 13 }}>Retry</Text>
+                  </TouchableOpacity>
                 </View>
               ) : (
                 leaderboard.map((u) => (
@@ -452,8 +460,19 @@ export default function CommunityScreen() {
                   </View>
 
                   {isLoadingSocial && friends.length === 0 ? (
-                    <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+                    <View style={{ paddingVertical: 40, alignItems: 'center', gap: 12 }}>
+                      <ActivityIndicator size="small" color={accent.red} />
                       <Text style={{ color: text.tertiary, fontStyle: 'italic' }}>Loading Friends list...</Text>
+                    </View>
+                  ) : socialError && friends.length === 0 ? (
+                    <View style={{ paddingVertical: 40, alignItems: 'center', gap: 12 }}>
+                      <Text style={{ color: '#EF4444', fontStyle: 'italic' }}>Failed to load friends list.</Text>
+                      <TouchableOpacity 
+                        style={{ backgroundColor: colors.surfaceHighlight, paddingVertical: 8, paddingHorizontal: 16, borderRadius: BorderRadius.md }}
+                        onPress={loadSocialData}
+                      >
+                        <Text style={{ color: text.primary, fontWeight: 'bold', fontSize: 13 }}>Retry</Text>
+                      </TouchableOpacity>
                     </View>
                   ) : friends.length === 0 ? (
                     <View style={styles.emptyState}>

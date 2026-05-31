@@ -19,8 +19,10 @@ import {
 } from 'react-native';
 import { 
   X, Timer, Trash2, CheckCircle2, Circle, 
-  Plus, PlusCircle, Search, XCircle, Dumbbell 
+  Plus, PlusCircle, Search, XCircle, Dumbbell,
+  GripVertical, ArrowUp, ArrowDown
 } from 'lucide-react-native';
+import Svg, { Circle as SvgCircle } from 'react-native-svg';
 import { useRouter } from 'expo-router';
 import Animated, { FadeInUp, FadeInDown, Layout, ZoomIn } from 'react-native-reanimated';
 import { useThemeColor, Spacing, BorderRadius, FontSize, FontWeight, Shadows } from '../lib/theme';
@@ -56,6 +58,7 @@ export default function WorkoutActiveScreen() {
     stopRestTimer,
     finishWorkout,
     cancelWorkout,
+    reorderExercise,
   } = useWorkoutStore();
 
   const [showExerciseSearch, setShowExerciseSearch] = useState(false);
@@ -383,20 +386,7 @@ export default function WorkoutActiveScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Rest Timer Banner */}
-      {restTimerRunning && restTimeLeft > 0 && (
-        <Animated.View entering={FadeInUp.springify()} style={styles.restTimerBanner}>
-          <View style={styles.restTimerContent}>
-            <Timer size={20} color="#fff" />
-            <Text style={styles.restTimerText}>
-              Rest: {Math.floor(restTimeLeft / 60)}:{(restTimeLeft % 60).toString().padStart(2, '0')}
-            </Text>
-          </View>
-          <TouchableOpacity onPress={stopRestTimer}>
-            <Text style={styles.restTimerSkip}>Skip</Text>
-          </TouchableOpacity>
-        </Animated.View>
-      )}
+
 
       {/* Exercise List */}
       <ScrollView
@@ -413,7 +403,44 @@ export default function WorkoutActiveScreen() {
             >
               {/* Exercise Header */}
               <View style={styles.exerciseHeader}>
-                <Text style={styles.exerciseName}>{exercise.name}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, marginRight: 12 }}>
+                  {/* Grip drag handle icon */}
+                  <GripVertical size={18} color={text.tertiary} />
+                  
+                  <Text style={[styles.exerciseName, { flex: 1 }]} numberOfLines={1}>
+                    {exercise.name}
+                  </Text>
+                  
+                  {/* Quick Reorder arrow controls */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        if (exIdx > 0) {
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                          reorderExercise(exIdx, exIdx - 1);
+                        }
+                      }}
+                      disabled={exIdx === 0}
+                      style={{ opacity: exIdx === 0 ? 0.25 : 0.85, padding: 4 }}
+                    >
+                      <ArrowUp size={16} color={text.secondary} />
+                    </TouchableOpacity>
+                    
+                    <TouchableOpacity
+                      onPress={() => {
+                        if (exIdx < exercises.length - 1) {
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                          reorderExercise(exIdx, exIdx + 1);
+                        }
+                      }}
+                      disabled={exIdx === exercises.length - 1}
+                      style={{ opacity: exIdx === exercises.length - 1 ? 0.25 : 0.85, padding: 4 }}
+                    >
+                      <ArrowDown size={16} color={text.secondary} />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
                 <TouchableOpacity
                   onPress={() => {
                     if (Platform.OS === 'web') {
@@ -533,6 +560,85 @@ export default function WorkoutActiveScreen() {
 
         <View style={{ height: 120 }} />
       </ScrollView>
+
+      {/* Floating Rest Timer Progress Pill */}
+      {restTimerRunning && restTimeLeft > 0 && (
+        <Animated.View 
+          entering={FadeInDown.springify()} 
+          style={{
+            position: 'absolute',
+            bottom: 30,
+            right: 20,
+            zIndex: 999,
+            backgroundColor: 'rgba(30, 27, 24, 0.92)',
+            borderRadius: 30,
+            paddingVertical: 10,
+            paddingHorizontal: 16,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 10,
+            borderWidth: 1,
+            borderColor: 'rgba(234, 179, 8, 0.35)',
+            shadowColor: '#EAB308',
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.25,
+            shadowRadius: 8,
+            elevation: 8,
+          }}
+        >
+          {/* Circular Countdown Ring using Svg */}
+          <View style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
+            <Svg width="34" height="34" viewBox="0 0 34 34">
+              {/* Underlay Circle */}
+              <SvgCircle
+                cx="17"
+                cy="17"
+                r="14"
+                stroke="rgba(255, 255, 255, 0.08)"
+                strokeWidth="3"
+                fill="transparent"
+              />
+              {/* Animated Countdown Circle */}
+              <SvgCircle
+                cx="17"
+                cy="17"
+                r="14"
+                stroke="#EAB308"
+                strokeWidth="3"
+                fill="transparent"
+                strokeDasharray={`${2 * Math.PI * 14}`}
+                strokeDashoffset={`${2 * Math.PI * 14 * (1 - (restTimeLeft / restTimerSeconds))}`}
+                strokeLinecap="round"
+                transform="rotate(-90 17 17)"
+              />
+            </Svg>
+            {/* Center Icon */}
+            <View style={{ position: 'absolute' }}>
+              <Timer size={14} color="#EAB308" />
+            </View>
+          </View>
+
+          <View style={{ gap: 1 }}>
+            <Text style={{ color: text.tertiary, fontSize: 9, fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: 0.5 }}>Resting</Text>
+            <Text style={{ color: '#EAB308', fontSize: 14, fontWeight: 'bold', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' }}>
+              {Math.floor(restTimeLeft / 60)}:{(restTimeLeft % 60).toString().padStart(2, '0')}
+            </Text>
+          </View>
+
+          {/* Separator line */}
+          <View style={{ width: 1, height: 20, backgroundColor: 'rgba(255, 255, 255, 0.1)', marginLeft: 4 }} />
+
+          <TouchableOpacity 
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              stopRestTimer();
+            }}
+            style={{ paddingHorizontal: 4 }}
+          >
+            <Text style={{ color: accent.red, fontSize: 13, fontWeight: 'bold' }}>Skip</Text>
+          </TouchableOpacity>
+        </Animated.View>
+      )}
 
       {/* Exercise Search Modal */}
       <Modal

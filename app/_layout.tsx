@@ -7,6 +7,8 @@ import { useEffect } from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { Colors, useThemeColor } from '../lib/theme';
+import { ErrorBoundary } from '../components/ErrorBoundary';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 // Prevent splash screen from auto-hiding
 SplashScreen.preventAutoHideAsync();
@@ -46,33 +48,37 @@ export default function RootLayout() {
   };
 
   return (
-    <ThemeProvider value={IronLogTheme}>
-      <Stack
-        screenOptions={{
-          headerShown: false,
-          contentStyle: { backgroundColor: colors.background },
-          animation: 'slide_from_right',
-        }}
-      >
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen 
-          name="(auth)" 
-          options={{ headerShown: false }} 
-        />
-        <Stack.Screen 
-          name="modal" 
-          options={{ presentation: 'modal', headerShown: false }} 
-        />
-        <Stack.Screen 
-          name="workout-active" 
-          options={{ 
-            headerShown: false,
-            gestureEnabled: false,
-            animation: 'slide_from_bottom',
-          }} 
-        />
-      </Stack>
-      <StatusBar style={isDark ? "light" : "dark"} />
-    </ThemeProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <ErrorBoundary>
+        <ThemeProvider value={IronLogTheme}>
+          <Stack
+            screenOptions={{
+              headerShown: false,
+              contentStyle: { backgroundColor: colors.background },
+              animation: 'slide_from_right',
+            }}
+          >
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen 
+              name="(auth)" 
+              options={{ headerShown: false }} 
+            />
+            <Stack.Screen 
+              name="modal" 
+              options={{ presentation: 'modal', headerShown: false }} 
+            />
+            <Stack.Screen 
+              name="workout-active" 
+              options={{ 
+                headerShown: false,
+                gestureEnabled: false,
+                animation: 'slide_from_bottom',
+              }} 
+            />
+          </Stack>
+          <StatusBar style={isDark ? "light" : "dark"} />
+        </ThemeProvider>
+      </ErrorBoundary>
+    </GestureHandlerRootView>
   );
 }
