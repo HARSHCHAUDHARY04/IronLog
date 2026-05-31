@@ -339,7 +339,7 @@ export default function AnalyticsScreen() {
               <Crown size={48} color="#FFD700" style={{ marginBottom: Spacing.md }} />
               <Text style={styles.paywallTitle}>Unlock Advanced Analytics</Text>
               <Text style={styles.paywallText}>
-                IronLog Premium unlocks your custom 1RM progression charts, automatic progressive overload calculations, and 3D recovery heatmaps.
+                Next Rep Premium unlocks your custom 1RM progression charts, automatic progressive overload calculations, and 3D recovery heatmaps.
               </Text>
               <TouchableOpacity style={styles.paywallButton} onPress={() => upgradeToPremium()}>
                 <Text style={styles.paywallButtonText}>Go Premium for ₹199</Text>

@@ -329,7 +329,7 @@ export default function ProfileScreen() {
               <Crown size={28} color={isPremium ? "#fff" : "#FFD700"} />
               <View style={{ flex: 1, marginLeft: Spacing.md }}>
                 <Text style={styles.subscriptionTitle}>
-                  {isPremium ? 'Premium Active' : 'IronLog Premium'}
+                  {isPremium ? 'Premium Active' : 'Next Rep Premium'}
                 </Text>
                 <Text style={styles.subscriptionSubtext}>
                   {isPremium ? 'Thanks for supporting us!' : 'Advanced analytics & unlimited history'}
@@ -440,8 +440,8 @@ export default function ProfileScreen() {
 
         {/* App Info */}
         <View style={styles.appInfo}>
-          <Text style={styles.appInfoText}>IronLog v2.0.0</Text>
-          <Text style={styles.appInfoText}>Premium Fitness Tracking</Text>
+          <Text style={styles.appInfoText}>Next Rep v2.0.0</Text>
+          <Text style={styles.appInfoText}>Every Rep Counts.</Text>
           <Text style={[styles.appInfoText, { marginTop: Spacing.sm }]}>
             Crafted for lifters
           </Text>

@@ -73,8 +73,8 @@ export default function LoginScreen() {
               <Dumbbell size={40} color="#fff" strokeWidth={2.5} />
             </LinearGradient>
           </View>
-          <Text style={styles.title}>IronLog</Text>
-          <Text style={styles.subtitle}>Welcome back to the grind.</Text>
+          <Text style={styles.title}>Next Rep</Text>
+          <Text style={styles.subtitle}>Every Rep Counts.</Text>
         </Animated.View>
 
         <Animated.View entering={FadeInUp.delay(200).springify()} style={styles.form}>

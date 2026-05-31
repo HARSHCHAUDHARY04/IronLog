@@ -41,6 +41,15 @@ async function ensureMockPool() {
   if (!data) {
     await AsyncStorage.setItem(KEYS.ALL_USERS, JSON.stringify(INITIAL_MOCK_USERS));
   }
+
+  const friends = await AsyncStorage.getItem(KEYS.FRIENDS);
+  const pending = await AsyncStorage.getItem(KEYS.PENDING_REQUESTS);
+  if (!friends && !pending) {
+    const incomingReq = [
+      { id: 'mock-3', name: 'Jordan Davis', xp: 2500, level: 5, avatar: 'J' }
+    ];
+    await AsyncStorage.setItem(KEYS.PENDING_REQUESTS, JSON.stringify(incomingReq));
+  }
 }
 
 /**
@@ -112,6 +121,121 @@ export async function fetchGlobalLeaderboard(limitNum = 20): Promise<SocialUser[
     .sort((a, b) => b.xp - a.xp)
     .slice(0, limitNum)
     .map((item, idx) => ({ ...item, rank: idx + 1 }));
+}
+
+/**
+ * Fetch incoming pending friend requests
+ */
+export async function fetchIncomingRequests(): Promise<SocialUser[]> {
+  const currentUser = await getUser();
+  if (!currentUser) return [];
+
+  if (isSupabaseConfigured) {
+    try {
+      const { data, error } = await supabase
+        .from('friends')
+        .select(`
+          user_id_1,
+          profiles:user_id_1 (id, username, level, xp)
+        `)
+        .eq('user_id_2', currentUser.id)
+        .eq('status', 'pending');
+
+      if (!error && data) {
+        return data.map((item: any) => {
+          const u = item.profiles;
+          return {
+            id: u.id,
+            name: u.username || 'Anonymous Lifter',
+            xp: u.xp || 0,
+            level: u.level || 1,
+            avatar: (u.username || 'A').charAt(0).toUpperCase(),
+          };
+        });
+      }
+    } catch (e) {
+      console.error('Failed to fetch incoming Supabase requests:', e);
+    }
+  }
+
+  // --- MOCK FALLBACK ---
+  await ensureMockPool();
+  const data = await AsyncStorage.getItem(KEYS.PENDING_REQUESTS);
+  return data ? JSON.parse(data) : [];
+}
+
+/**
+ * Accept a friend request
+ */
+export async function acceptFriend(friendId: string): Promise<boolean> {
+  const currentUser = await getUser();
+  if (!currentUser) return false;
+
+  if (isSupabaseConfigured) {
+    try {
+      const { error } = await supabase
+        .from('friends')
+        .update({ status: 'accepted' })
+        .eq('user_id_1', friendId)
+        .eq('user_id_2', currentUser.id);
+
+      if (!error) return true;
+    } catch (e) {
+      console.error('Failed to accept Supabase friend request:', e);
+    }
+  }
+
+  // --- MOCK FALLBACK ---
+  await ensureMockPool();
+  const pendingStr = await AsyncStorage.getItem(KEYS.PENDING_REQUESTS);
+  let pending: SocialUser[] = pendingStr ? JSON.parse(pendingStr) : [];
+  const target = pending.find(u => u.id === friendId);
+
+  if (target) {
+    pending = pending.filter(u => u.id !== friendId);
+    await AsyncStorage.setItem(KEYS.PENDING_REQUESTS, JSON.stringify(pending));
+
+    const friendsStr = await AsyncStorage.getItem(KEYS.FRIENDS);
+    const friends: SocialUser[] = friendsStr ? JSON.parse(friendsStr) : [];
+    if (!friends.some(f => f.id === friendId)) {
+      friends.push(target);
+      await AsyncStorage.setItem(KEYS.FRIENDS, JSON.stringify(friends));
+    }
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Decline/Ignore a friend request
+ */
+export async function declineFriend(friendId: string): Promise<boolean> {
+  const currentUser = await getUser();
+  if (!currentUser) return false;
+
+  if (isSupabaseConfigured) {
+    try {
+      const { error } = await supabase
+        .from('friends')
+        .delete()
+        .eq('user_id_1', friendId)
+        .eq('user_id_2', currentUser.id);
+
+      if (!error) return true;
+    } catch (e) {
+      console.error('Failed to decline Supabase friend request:', e);
+    }
+  }
+
+  // --- MOCK FALLBACK ---
+  await ensureMockPool();
+  const pendingStr = await AsyncStorage.getItem(KEYS.PENDING_REQUESTS);
+  if (pendingStr) {
+    const pending: SocialUser[] = JSON.parse(pendingStr);
+    const filtered = pending.filter(u => u.id !== friendId);
+    await AsyncStorage.setItem(KEYS.PENDING_REQUESTS, JSON.stringify(filtered));
+  }
+  return true;
 }
 
 /**
@@ -219,7 +343,7 @@ export async function addFriend(friendId: string): Promise<boolean> {
       const { error } = await supabase
         .from('friends')
         .insert([
-          { user_id_1: currentUser.id, user_id_2: friendId, status: 'accepted' } // Auto-accept requests for simplified demo
+          { user_id_1: currentUser.id, user_id_2: friendId, status: 'pending' }
         ]);
       if (!error) return true;
     } catch (e) {

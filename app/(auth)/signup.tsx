@@ -72,7 +72,7 @@ export default function SignupScreen() {
       <View style={styles.content}>
         <Animated.View entering={FadeInDown.delay(100).springify()} style={styles.titleContainer}>
           <Text style={styles.title}>Create Account</Text>
-          <Text style={styles.subtitle}>Start tracking your progress today.</Text>
+          <Text style={styles.subtitle}>Every Rep Counts.</Text>
         </Animated.View>
 
         <Animated.View entering={FadeInUp.delay(200).springify()} style={styles.form}>

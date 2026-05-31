@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Platform, KeyboardAvoidingView, Alert, ActivityIndicator } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, useThemeColor, Spacing, BorderRadius, FontSize, FontWeight } from '../../lib/theme';
 import { useAuthStore } from '../../stores/authStore';
@@ -7,7 +8,83 @@ import { Sparkles, Send, Brain, Bot, Volume2, VolumeX, Mic } from 'lucide-react-
 import * as Speech from 'expo-speech';
 import MarkdownText from '../../components/MarkdownText';
 import { getAICoachingAdvice } from '../../lib/gemini';
-import { fetchGlobalLeaderboard, fetchFriends, searchUsers, addFriend, removeFriend } from '../../lib/social';
+import { fetchGlobalLeaderboard, fetchFriends, searchUsers, addFriend, removeFriend, fetchIncomingRequests, acceptFriend, declineFriend } from '../../lib/social';
+import { saveTemplate } from '../../lib/storage';
+import * as Haptics from 'expo-haptics';
+
+const MOCK_FRIEND_ROUTINES: Record<string, { name: string; muscle_groups: string[]; exercises: { name: string; sets: number; reps: number }[]; prs: { name: string; value: string }[] }> = {
+  'mock-1': {
+    name: "Alex's Golden Era Chest & Back",
+    muscle_groups: ['Chest', 'Back'],
+    exercises: [
+      { name: 'Barbell Bench Press', sets: 4, reps: 8 },
+      { name: 'Incline Dumbbell Press', sets: 3, reps: 10 },
+      { name: 'Bent-Over Barbell Rows', sets: 4, reps: 8 },
+      { name: 'Pull-Ups', sets: 3, reps: 12 }
+    ],
+    prs: [
+      { name: 'Bench Press', value: '110 kg' },
+      { name: 'Deadlift', value: '180 kg' }
+    ]
+  },
+  'mock-2': {
+    name: "Sam's Powerlifting Squat Special",
+    muscle_groups: ['Legs'],
+    exercises: [
+      { name: 'Barbell Back Squat', sets: 5, reps: 5 },
+      { name: 'Leg Press', sets: 3, reps: 10 },
+      { name: 'Romanian Deadlift', sets: 4, reps: 8 }
+    ],
+    prs: [
+      { name: 'Back Squat', value: '160 kg' },
+      { name: 'Deadlift', value: '200 kg' }
+    ]
+  },
+  'mock-3': {
+    name: "Jordan's High Intensity Shoulder Shred",
+    muscle_groups: ['Shoulders'],
+    exercises: [
+      { name: 'Overhead Press', sets: 4, reps: 6 },
+      { name: 'Dumbbell Lateral Raises', sets: 4, reps: 12 },
+      { name: 'Face Pulls', sets: 3, reps: 15 }
+    ],
+    prs: [
+      { name: 'Overhead Press', value: '75 kg' }
+    ]
+  },
+  'mock-4': {
+    name: "Sarah's Posterior Chain Powerhouse",
+    muscle_groups: ['Glutes', 'Hamstrings'],
+    exercises: [
+      { name: 'Barbell Deadlift', sets: 4, reps: 5 },
+      { name: 'Glute Ham Raises', sets: 3, reps: 10 },
+      { name: 'Barbell Hip Thrusts', sets: 4, reps: 8 }
+    ],
+    prs: [
+      { name: 'Deadlift', value: '140 kg' },
+      { name: 'Squat', value: '115 kg' }
+    ]
+  }
+};
+
+const getFriendRoutine = (id: string, name: string) => {
+  if (MOCK_FRIEND_ROUTINES[id]) {
+    return MOCK_FRIEND_ROUTINES[id];
+  }
+  return {
+    name: `${name}'s Strength Routine`,
+    muscle_groups: ['Full Body'],
+    exercises: [
+      { name: 'Squat', sets: 3, reps: 8 },
+      { name: 'Bench Press', sets: 3, reps: 8 },
+      { name: 'Pull-Ups', sets: 3, reps: 10 }
+    ],
+    prs: [
+      { name: 'Bench Press', value: '85 kg' },
+      { name: 'Squat', value: '120 kg' }
+    ]
+  };
+};
 
 export default function CommunityScreen() {
   const { colors, text, accent, status, muscle } = useThemeColor();
@@ -48,6 +125,42 @@ export default function CommunityScreen() {
       setSpeakingMessageId(null);
     }
   }, [activeTab]);
+
+  useEffect(() => {
+    const loadChats = async () => {
+      try {
+        const stored = await AsyncStorage.getItem('nextrep_chats');
+        if (stored) {
+          setChatMessages(JSON.parse(stored));
+        } else {
+          const initial = {
+            'mock-1': [
+              { id: '1', text: "Hey bro! Are we hitting the gym together today?", sender: 'them' as const, timestamp: new Date(Date.now() - 3600000 * 2).toISOString() },
+              { id: '2', text: "Yeah! Let's do chest and back.", sender: 'me' as const, timestamp: new Date(Date.now() - 3600000).toISOString() },
+              { id: '3', text: "Awesome, see you at 6 PM. I'm going to try to Bench 110kg today!", sender: 'them' as const, timestamp: new Date(Date.now() - 1800000).toISOString() }
+            ],
+            'mock-2': [
+              { id: '1', text: "Did you check out my squat progression chart in the analytics tab?", sender: 'them' as const, timestamp: new Date(Date.now() - 7200000).toISOString() },
+              { id: '2', text: "Yes! 160kg is insane progress, Sam!", sender: 'me' as const, timestamp: new Date(Date.now() - 3600000).toISOString() },
+              { id: '3', text: "Thanks man! Consistency pays off 👊", sender: 'them' as const, timestamp: new Date(Date.now() - 1800000).toISOString() }
+            ],
+            'mock-3': [
+              { id: '1', text: "Hey! What's the best exercise to hit the rear delts?", sender: 'them' as const, timestamp: new Date(Date.now() - 10000000).toISOString() },
+              { id: '2', text: "Face pulls or reverse dumbbell flyes work great.", sender: 'me' as const, timestamp: new Date(Date.now() - 8000000).toISOString() }
+            ],
+            'mock-4': [
+              { id: '1', text: "Smashing deadlifts tomorrow. You in?", sender: 'them' as const, timestamp: new Date(Date.now() - 3600000 * 4).toISOString() }
+            ]
+          };
+          setChatMessages(initial);
+          await AsyncStorage.setItem('nextrep_chats', JSON.stringify(initial));
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    };
+    loadChats();
+  }, []);
 
   // HTML5 Web Speech Dictation Init
   useEffect(() => {
@@ -248,6 +361,17 @@ export default function CommunityScreen() {
   // Dynamic Social State
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
   const [friends, setFriends] = useState<any[]>([]);
+  const [incomingRequests, setIncomingRequests] = useState<any[]>([]);
+  const [expandedFriendId, setExpandedFriendId] = useState<string | null>(null);
+  const [fistBumps, setFistBumps] = useState<Record<string, number>>({});
+  const [isCopyingRoutine, setIsCopyingRoutine] = useState<string | null>(null);
+
+  // Direct Chat States
+  const [activeChatFriend, setActiveChatFriend] = useState<any | null>(null);
+  const [chatMessages, setChatMessages] = useState<Record<string, { id: string; text: string; sender: 'me' | 'them'; timestamp: string }[]>>({});
+  const [directChatInput, setDirectChatInput] = useState('');
+  const [isFriendTyping, setIsFriendTyping] = useState(false);
+
   const [isLoadingSocial, setIsLoadingSocial] = useState(false);
   const [socialError, setSocialError] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -258,12 +382,14 @@ export default function CommunityScreen() {
     setIsLoadingSocial(true);
     setSocialError(false);
     try {
-      const [lb, fr] = await Promise.all([
+      const [lb, fr, reqs] = await Promise.all([
         fetchGlobalLeaderboard(20),
-        fetchFriends()
+        fetchFriends(),
+        fetchIncomingRequests()
       ]);
       setLeaderboard(lb);
       setFriends(fr);
+      setIncomingRequests(reqs);
     } catch (e) {
       console.error('Failed to load social data:', e);
       setSocialError(true);
@@ -323,6 +449,148 @@ export default function CommunityScreen() {
     } catch (e) {
       console.error(e);
     }
+  };
+
+  const handleAcceptFriend = async (friendId: string) => {
+    try {
+      const success = await acceptFriend(friendId);
+      if (success) {
+        await loadSocialData();
+        if (Platform.OS === 'web') {
+          alert("Friend request accepted!");
+        } else {
+          Alert.alert("Success", "Friend request accepted!");
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleDeclineFriend = async (friendId: string) => {
+    try {
+      const success = await declineFriend(friendId);
+      if (success) {
+        await loadSocialData();
+        if (Platform.OS === 'web') {
+          alert("Friend request declined.");
+        } else {
+          Alert.alert("Declined", "Friend request declined.");
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleFistBump = async (friendId: string, name: string) => {
+    try {
+      if (Platform.OS !== 'web') {
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+    } catch (e) {
+      console.warn(e);
+    }
+    setFistBumps(prev => ({
+      ...prev,
+      [friendId]: (prev[friendId] || 0) + 1
+    }));
+  };
+
+  const handleCopyRoutine = async (friendId: string, name: string) => {
+    setIsCopyingRoutine(friendId);
+    try {
+      const routine = getFriendRoutine(friendId, name);
+      await saveTemplate({
+        user_id: user?.id || 'user',
+        name: routine.name,
+        muscle_groups: routine.muscle_groups,
+        exercises: routine.exercises,
+        is_default: false
+      });
+      
+      try {
+        if (Platform.OS !== 'web') {
+          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        }
+      } catch (h) {}
+
+      if (Platform.OS === 'web') {
+        alert(`Copied "${routine.name}" directly to your templates!`);
+      } else {
+        Alert.alert("Success", `Copied "${routine.name}" directly to your templates! You can start this workout in your Workout tab.`);
+      }
+    } catch (e) {
+      console.error(e);
+      Alert.alert("Error", "Failed to copy template.");
+    } finally {
+      setIsCopyingRoutine(null);
+    }
+  };
+
+  const handleSendDirectMessage = async () => {
+    if (!directChatInput.trim() || !activeChatFriend) return;
+
+    const friendId = activeChatFriend.id;
+    const newMessage = {
+      id: Math.random().toString(),
+      text: directChatInput,
+      sender: 'me' as const,
+      timestamp: new Date().toISOString()
+    };
+
+    const updatedChats: Record<string, { id: string; text: string; sender: 'me' | 'them'; timestamp: string }[]> = {
+      ...chatMessages,
+      [friendId]: [...(chatMessages[friendId] || []), newMessage]
+    };
+    setChatMessages(updatedChats);
+    await AsyncStorage.setItem('nextrep_chats', JSON.stringify(updatedChats));
+    setDirectChatInput('');
+
+    try {
+      if (Platform.OS !== 'web') {
+        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }
+    } catch (h) {}
+
+    setIsFriendTyping(true);
+    setTimeout(async () => {
+      let replyText = "Let's push it! Every single rep counts! 👊";
+      const nameLower = activeChatFriend.name.toLowerCase();
+      
+      if (nameLower.includes('alex')) {
+        replyText = "Hell yeah! Remember, consistency beats everything. See you at the gym! 🏋️‍♂️";
+      } else if (nameLower.includes('sam')) {
+        replyText = "Heavy squats and deadlifts are calling! Let's hit a new PR this week! 🔥";
+      } else if (nameLower.includes('jordan')) {
+        replyText = "No limits! Let's shatter some boundaries today. Let's go! 🚀";
+      } else if (nameLower.includes('sarah')) {
+        replyText = "Absolutely! Time to smash some heavy sets and fuel up. Let's get it! 💪";
+      } else {
+        replyText = `Grinding hard! Let's get that extra rep! 💯`;
+      }
+
+      const replyMessage = {
+        id: Math.random().toString(),
+        text: replyText,
+        sender: 'them' as const,
+        timestamp: new Date().toISOString()
+      };
+
+      const finalChats: Record<string, { id: string; text: string; sender: 'me' | 'them'; timestamp: string }[]> = {
+        ...updatedChats,
+        [friendId]: [...(updatedChats[friendId] || []), replyMessage]
+      };
+      setChatMessages(finalChats);
+      await AsyncStorage.setItem('nextrep_chats', JSON.stringify(finalChats));
+      setIsFriendTyping(false);
+
+      try {
+        if (Platform.OS !== 'web') {
+          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        }
+      } catch (h) {}
+    }, 1500);
   };
 
   return (
@@ -442,6 +710,55 @@ export default function CommunityScreen() {
                 </View>
               ) : (
                 <View>
+                  {/* Incoming requests section */}
+                  {incomingRequests.length > 0 && (
+                    <View style={{ marginBottom: 24 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                        <Text style={styles.sectionTitle}>Friend Requests</Text>
+                        <View style={{ backgroundColor: accent.red, borderRadius: 10, paddingHorizontal: 6, paddingVertical: 2, marginLeft: 8 }}>
+                          <Text style={{ color: '#fff', fontSize: 10, fontWeight: 'bold' }}>{incomingRequests.length}</Text>
+                        </View>
+                      </View>
+                      {incomingRequests.map((req) => (
+                        <View key={req.id} style={styles.userCard}>
+                          <View style={styles.avatar}>
+                            <Text style={styles.avatarText}>{req.avatar}</Text>
+                          </View>
+                          <View style={styles.userInfo}>
+                            <Text style={styles.userName}>{req.name}</Text>
+                            <Text style={styles.userLevel}>Lvl {req.level} • {req.xp} XP</Text>
+                          </View>
+                          <View style={{ flexDirection: 'row', gap: 8 }}>
+                            <TouchableOpacity
+                              style={{
+                                backgroundColor: '#22C55E',
+                                paddingHorizontal: 12,
+                                paddingVertical: 6,
+                                borderRadius: 6
+                              }}
+                              onPress={() => handleAcceptFriend(req.id)}
+                            >
+                              <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 12 }}>Accept</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={{
+                                backgroundColor: colors.surfaceHighlight,
+                                paddingHorizontal: 12,
+                                paddingVertical: 6,
+                                borderRadius: 6,
+                                borderWidth: 1,
+                                borderColor: colors.border
+                              }}
+                              onPress={() => handleDeclineFriend(req.id)}
+                            >
+                              <Text style={{ color: text.secondary, fontWeight: 'bold', fontSize: 12 }}>Ignore</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
                     <Text style={styles.sectionTitle}>Your Friends</Text>
                     <TouchableOpacity 
@@ -483,29 +800,179 @@ export default function CommunityScreen() {
                       </TouchableOpacity>
                     </View>
                   ) : (
-                    friends.map((friend) => (
-                      <View key={friend.id} style={styles.userCard}>
-                        <View style={styles.avatar}>
-                          <Text style={styles.avatarText}>{friend.avatar}</Text>
-                        </View>
-                        <View style={styles.userInfo}>
-                          <Text style={styles.userName}>{friend.name}</Text>
-                          <Text style={styles.userLevel}>Lvl {friend.level} • {friend.xp} XP</Text>
-                        </View>
-                        <TouchableOpacity
+                    friends.map((friend) => {
+                      const isExpanded = expandedFriendId === friend.id;
+                      const routine = getFriendRoutine(friend.id, friend.name);
+                      const bumpCount = fistBumps[friend.id] || 0;
+
+                      return (
+                        <View 
+                          key={friend.id} 
                           style={{
-                            paddingHorizontal: 10,
-                            paddingVertical: 6,
-                            borderRadius: 6,
+                            backgroundColor: colors.surfaceElevated,
+                            borderRadius: BorderRadius.md,
                             borderWidth: 1,
-                            borderColor: 'rgba(239, 68, 68, 0.2)'
+                            borderColor: isExpanded ? accent.red : colors.border,
+                            marginBottom: 12,
+                            overflow: 'hidden'
                           }}
-                          onPress={() => handleRemoveFriend(friend.id)}
                         >
-                          <Text style={{ color: accent.red, fontSize: 11, fontWeight: 'bold' }}>Remove</Text>
-                        </TouchableOpacity>
-                      </View>
-                    ))
+                          {/* Main Row (Header) */}
+                          <TouchableOpacity 
+                            style={{
+                              flexDirection: 'row', 
+                              alignItems: 'center', 
+                              padding: 14,
+                              justifyContent: 'space-between'
+                            }}
+                            onPress={() => setExpandedFriendId(isExpanded ? null : friend.id)}
+                            activeOpacity={0.7}
+                          >
+                            <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                              <View style={styles.avatar}>
+                                <Text style={styles.avatarText}>{friend.avatar}</Text>
+                              </View>
+                              <View style={styles.userInfo}>
+                                <Text style={styles.userName}>{friend.name}</Text>
+                                <Text style={styles.userLevel}>Lvl {friend.level} • {friend.xp} XP</Text>
+                              </View>
+                            </View>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                              {bumpCount > 0 && (
+                                <View style={{ backgroundColor: 'rgba(234, 179, 8, 0.15)', borderRadius: 12, paddingHorizontal: 8, paddingVertical: 4 }}>
+                                  <Text style={{ color: '#EAB308', fontSize: 11, fontWeight: 'bold' }}>👊 {bumpCount}</Text>
+                                </View>
+                              )}
+                              <Ionicons 
+                                name={isExpanded ? "chevron-up" : "chevron-down"} 
+                                size={18} 
+                                color={text.tertiary} 
+                              />
+                            </View>
+                          </TouchableOpacity>
+
+                          {/* Expanded Content */}
+                          {isExpanded && (
+                            <View style={{ 
+                              padding: 14, 
+                              borderTopWidth: 1, 
+                              borderColor: colors.border,
+                              backgroundColor: colors.surfaceHighlight 
+                            }}>
+                              {/* PRs Section */}
+                              {routine.prs.length > 0 && (
+                                <View style={{ marginBottom: 14 }}>
+                                  <Text style={{ color: text.secondary, fontSize: 11, fontWeight: 'bold', textTransform: 'uppercase', marginBottom: 6 }}>Top Lifts 🏆</Text>
+                                  <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+                                    {routine.prs.map((pr, i) => (
+                                      <View key={i} style={{ backgroundColor: colors.surfaceElevated, borderWidth: 1, borderColor: colors.border, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 }}>
+                                        <Text style={{ color: text.tertiary, fontSize: 10 }}>{pr.name}</Text>
+                                        <Text style={{ color: accent.red, fontSize: 13, fontWeight: 'bold' }}>{pr.value}</Text>
+                                      </View>
+                                    ))}
+                                  </View>
+                                </View>
+                              )}
+
+                              {/* Routine Section */}
+                              <View style={{ 
+                                backgroundColor: colors.surfaceElevated, 
+                                borderRadius: BorderRadius.md, 
+                                padding: 12, 
+                                borderWidth: 1, 
+                                borderColor: colors.border,
+                                marginBottom: 14 
+                              }}>
+                                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                                  <Text style={{ color: text.primary, fontSize: 13, fontWeight: 'bold' }}>Signature Routine</Text>
+                                  <View style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 }}>
+                                    <Text style={{ color: accent.red, fontSize: 9, fontWeight: 'bold' }}>{routine.muscle_groups.join(', ')}</Text>
+                                  </View>
+                                </View>
+                                <Text style={{ color: text.secondary, fontSize: 12, fontWeight: 'bold', marginBottom: 8 }}>{routine.name}</Text>
+                                
+                                {routine.exercises.map((ex, idx) => (
+                                  <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4, borderBottomWidth: idx === routine.exercises.length - 1 ? 0 : 1, borderColor: colors.border }}>
+                                    <Text style={{ color: text.secondary, fontSize: 12 }}>{ex.name}</Text>
+                                    <Text style={{ color: text.tertiary, fontSize: 12, fontWeight: 'bold' }}>{ex.sets}x{ex.reps}</Text>
+                                  </View>
+                                ))}
+
+                                <TouchableOpacity 
+                                  style={{
+                                    backgroundColor: '#C08D38',
+                                    borderRadius: 6,
+                                    paddingVertical: 10,
+                                    alignItems: 'center',
+                                    marginTop: 12,
+                                  }}
+                                  onPress={() => handleCopyRoutine(friend.id, friend.name)}
+                                  disabled={isCopyingRoutine === friend.id}
+                                >
+                                  {isCopyingRoutine === friend.id ? (
+                                    <ActivityIndicator size="small" color="#fff" />
+                                  ) : (
+                                    <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold' }}>📋 Copy Routine to My Templates</Text>
+                                  )}
+                                </TouchableOpacity>
+                              </View>
+
+                              {/* Interactive Actions Footer */}
+                              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                                <View style={{ flexDirection: 'row', gap: 8 }}>
+                                  <TouchableOpacity 
+                                    style={{
+                                      flexDirection: 'row',
+                                      backgroundColor: 'rgba(234, 179, 8, 0.15)',
+                                      borderRadius: 6,
+                                      paddingHorizontal: 12,
+                                      paddingVertical: 8,
+                                      alignItems: 'center',
+                                      gap: 6
+                                    }}
+                                    onPress={() => handleFistBump(friend.id, friend.name)}
+                                  >
+                                    <Text style={{ fontSize: 14 }}>👊</Text>
+                                    <Text style={{ color: '#EAB308', fontSize: 12, fontWeight: 'bold' }}>Fist Bump</Text>
+                                  </TouchableOpacity>
+
+                                  <TouchableOpacity 
+                                    style={{
+                                      flexDirection: 'row',
+                                      backgroundColor: colors.surfaceHighlight,
+                                      borderRadius: 6,
+                                      paddingHorizontal: 12,
+                                      paddingVertical: 8,
+                                      alignItems: 'center',
+                                      gap: 6,
+                                      borderWidth: 1,
+                                      borderColor: colors.border
+                                    }}
+                                    onPress={() => setActiveChatFriend(friend)}
+                                  >
+                                    <Ionicons name="chatbubble-ellipses" size={16} color={text.primary} />
+                                    <Text style={{ color: text.primary, fontSize: 12, fontWeight: 'bold' }}>Message</Text>
+                                  </TouchableOpacity>
+                                </View>
+
+                                <TouchableOpacity
+                                  style={{
+                                    paddingHorizontal: 10,
+                                    paddingVertical: 8,
+                                    borderRadius: 6,
+                                    borderWidth: 1,
+                                    borderColor: 'rgba(239, 68, 68, 0.2)'
+                                  }}
+                                  onPress={() => handleRemoveFriend(friend.id)}
+                                >
+                                  <Text style={{ color: accent.red, fontSize: 11, fontWeight: 'bold' }}>Remove Friend</Text>
+                                </TouchableOpacity>
+                              </View>
+                            </View>
+                          )}
+                        </View>
+                      );
+                    })
                   )}
                 </View>
               )}
@@ -689,6 +1156,179 @@ export default function CommunityScreen() {
             </View>
           </View>
         </KeyboardAvoidingView>
+      )}
+
+      {/* Direct Messaging Chat Modal Overlay */}
+      {activeChatFriend && (
+        <View style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: colors.background,
+          zIndex: 1000
+        }}>
+          {/* Header */}
+          <View style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            paddingTop: Platform.OS === 'ios' ? 50 : 20,
+            paddingBottom: 12,
+            paddingHorizontal: Spacing.lg,
+            borderBottomWidth: 1,
+            borderColor: colors.border,
+            backgroundColor: colors.surface
+          }}>
+            <TouchableOpacity 
+              onPress={() => setActiveChatFriend(null)} 
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: 20,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: colors.surfaceHighlight,
+                marginRight: 12
+              }}
+            >
+              <Ionicons name="arrow-back" size={24} color={text.primary} />
+            </TouchableOpacity>
+
+            <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: colors.surfaceHighlight, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+              <Text style={{ color: text.primary, fontWeight: 'bold', fontSize: 16 }}>{activeChatFriend.avatar || 'F'}</Text>
+            </View>
+
+            <View style={{ flex: 1 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Text style={{ color: text.primary, fontWeight: 'bold', fontSize: 16 }}>{activeChatFriend.name}</Text>
+                <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#22C55E' }} />
+              </View>
+              <Text style={{ color: text.tertiary, fontSize: 11 }}>Lvl {activeChatFriend.level} • Active Now</Text>
+            </View>
+          </View>
+
+          {/* Messages List */}
+          <ScrollView 
+            style={{ flex: 1, padding: Spacing.lg }}
+            contentContainerStyle={{ gap: 12, paddingBottom: 24 }}
+            ref={(ref) => {
+              if (ref) {
+                setTimeout(() => ref.scrollToEnd({ animated: true }), 100);
+              }
+            }}
+          >
+            {(chatMessages[activeChatFriend.id] || []).length === 0 ? (
+              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 100 }}>
+                <Ionicons name="chatbubbles" size={48} color={colors.border} style={{ marginBottom: 12 }} />
+                <Text style={{ color: text.tertiary, fontStyle: 'italic', fontSize: 13 }}>No messages yet. Send a message to start the grind!</Text>
+              </View>
+            ) : (
+              (chatMessages[activeChatFriend.id] || []).map((msg) => {
+                const isMe = msg.sender === 'me';
+                return (
+                  <View 
+                    key={msg.id} 
+                    style={{
+                      alignSelf: isMe ? 'flex-end' : 'flex-start',
+                      maxWidth: '80%',
+                      backgroundColor: isMe ? accent.red : colors.surfaceElevated,
+                      borderWidth: isMe ? 0 : 1,
+                      borderColor: colors.border,
+                      borderRadius: 16,
+                      borderBottomRightRadius: isMe ? 2 : 16,
+                      borderBottomLeftRadius: isMe ? 16 : 2,
+                      paddingHorizontal: 14,
+                      paddingVertical: 10
+                    }}
+                  >
+                    <Text style={{ color: isMe ? '#fff' : text.primary, fontSize: 14 }}>{msg.text}</Text>
+                    <Text style={{ color: isMe ? 'rgba(255, 255, 255, 0.6)' : text.tertiary, fontSize: 8, marginTop: 4, alignSelf: 'flex-end' }}>
+                      {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </Text>
+                  </View>
+                );
+              })
+            )}
+
+            {isFriendTyping && (
+              <View 
+                style={{
+                  alignSelf: 'flex-start',
+                  backgroundColor: colors.surfaceElevated,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  borderRadius: 16,
+                  borderBottomLeftRadius: 2,
+                  paddingHorizontal: 14,
+                  paddingVertical: 10,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 4
+                }}
+              >
+                <Text style={{ color: text.tertiary, fontSize: 12, fontStyle: 'italic' }}>{activeChatFriend.name} is typing...</Text>
+              </View>
+            )}
+          </ScrollView>
+
+          {/* Input Bar */}
+          <KeyboardAvoidingView 
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 80 : 0}
+          >
+            <View style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              paddingHorizontal: Spacing.md,
+              paddingVertical: 12,
+              borderTopWidth: 1,
+              borderColor: colors.border,
+              backgroundColor: colors.surface,
+              gap: 8,
+              paddingBottom: Platform.OS === 'ios' ? 24 : 12
+            }}>
+              <TextInput
+                style={{
+                  flex: 1,
+                  backgroundColor: colors.surfaceHighlight,
+                  borderRadius: 20,
+                  paddingHorizontal: 16,
+                  paddingVertical: 10,
+                  color: text.primary,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  fontSize: 14,
+                  fontWeight: 'medium'
+                }}
+                placeholder="Message..."
+                placeholderTextColor={text.tertiary}
+                value={directChatInput}
+                onChangeText={setDirectChatInput}
+                onSubmitEditing={handleSendDirectMessage}
+              />
+              <TouchableOpacity 
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: 20,
+                  backgroundColor: directChatInput.trim() ? accent.red : colors.surfaceHighlight,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  shadowColor: directChatInput.trim() ? accent.red : 'transparent', 
+                  shadowOffset: { width: 0, height: 2 }, 
+                  shadowOpacity: 0.15, 
+                  shadowRadius: 8, 
+                  elevation: 2
+                }}
+                onPress={handleSendDirectMessage}
+                disabled={!directChatInput.trim()}
+              >
+                <Ionicons name="send" size={18} color={directChatInput.trim() ? '#fff' : text.tertiary} />
+              </TouchableOpacity>
+            </View>
+          </KeyboardAvoidingView>
+        </View>
       )}
     </View>
   );

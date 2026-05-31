@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "ironlog",
+    "name": "Next Rep",
     "slug": "ironlog",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -46,6 +46,12 @@
       "eas": {
         "projectId": "77c48717-fcbe-4c54-a3e7-2d4b52dcb2fb"
       }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/77c48717-fcbe-4c54-a3e7-2d4b52dcb2fb"
     }
   }
 }
