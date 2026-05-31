@@ -183,8 +183,22 @@ export async function getUser(): Promise<User | null> {
 
 export async function saveUser(user: Partial<User>): Promise<User> {
   const existing = await getUser();
+  
+  // Resolve correct user ID: prioritize passed id, then active Supabase session, then existing local ID
+  let resolvedId = user.id || existing?.id || generateId();
+  if (isSupabaseConfigured && !user.id) {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        resolvedId = session.user.id;
+      }
+    } catch (e) {
+      console.error('Failed to resolve authenticated session ID in saveUser:', e);
+    }
+  }
+
   const updated: User = {
-    id: existing?.id || generateId(),
+    id: resolvedId,
     name: user.name || existing?.name || '',
     email: user.email || existing?.email || '',
     age: user.age ?? existing?.age,

@@ -235,7 +235,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       set({ isLoading: true });
       
-      const redirectUrl = Linking.createURL('/(tabs)');
+      const redirectUrl = Linking.createURL('/');
+      console.log('--- GOOGLE AUTH REDIRECT URL IS: ---', redirectUrl);
       
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
@@ -249,6 +250,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       });
 
       if (error) throw error;
+      
+      console.log('--- OAUTH DATA URL IS: ---', data?.url);
 
       if (data?.url) {
         const result = await WebBrowser.openAuthSessionAsync(
