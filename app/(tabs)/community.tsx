@@ -97,7 +97,7 @@ export default function CommunityScreen() {
   const [messages, setMessages] = useState<{ id: string; text: string; sender: 'user' | 'ai'; timestamp: Date }[]>([
     {
       id: 'welcome',
-      text: "Hey! I'm IronBot, your certified AI Coach. Ask me anything about progressive overload, breaking plateaus, dynamic recovery, or custom nutrition schedules!",
+      text: "Hey! I'm RepBot, your certified AI Coach. Ask me anything about progressive overload, breaking plateaus, dynamic recovery, or custom nutrition schedules!",
       sender: 'ai',
       timestamp: new Date()
     }
@@ -986,7 +986,7 @@ export default function CommunityScreen() {
           keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 0}
         >
           <View style={{ flex: 1, paddingHorizontal: Spacing.lg, paddingBottom: Spacing.lg }}>
-            <Text style={styles.sectionTitle}>IronBot AI Personal Trainer</Text>
+            <Text style={styles.sectionTitle}>RepBot AI Personal Trainer</Text>
 
             {/* Chat Messages */}
             <View style={{
@@ -1075,7 +1075,7 @@ export default function CommunityScreen() {
                     borderColor: 'rgba(234,179,8,0.2)'
                   }}>
                     <Text style={{ color: text.tertiary, fontStyle: 'italic', fontSize: 13 }}>
-                      IronBot is analyzing...
+                      RepBot is analyzing...
                     </Text>
                   </View>
                 )}
@@ -1119,7 +1119,7 @@ export default function CommunityScreen() {
                   borderWidth: 1,
                   borderColor: colors.border
                 }}
-                placeholder="Ask IronBot advice..."
+                placeholder="Ask RepBot advice..."
                 placeholderTextColor={text.tertiary}
                 value={inputMessage}
                 onChangeText={setInputMessage}
