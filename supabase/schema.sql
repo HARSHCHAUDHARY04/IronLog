@@ -376,3 +376,88 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 CREATE OR REPLACE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+-- ═══════════════════════════════════════════════════════
+-- 6. DIRECT MESSAGES
+-- ═══════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS public.messages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    sender_id UUID REFERENCES public.profiles(id) NOT NULL,
+    receiver_id UUID REFERENCES public.profiles(id) NOT NULL,
+    text TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    read_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_messages_conversation ON public.messages (
+    LEAST(sender_id, receiver_id),
+    GREATEST(sender_id, receiver_id),
+    created_at DESC
+);
+
+ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view their messages."
+ON public.messages FOR SELECT USING (auth.uid() = sender_id OR auth.uid() = receiver_id);
+
+CREATE POLICY "Users can send messages."
+ON public.messages FOR INSERT WITH CHECK (auth.uid() = sender_id);
+
+CREATE POLICY "Users can update their received messages (mark read)."
+ON public.messages FOR UPDATE USING (auth.uid() = receiver_id);
+
+-- Enable Realtime for messages
+ALTER PUBLICATION supabase_realtime ADD TABLE public.messages;
+
+-- ═══════════════════════════════════════════════════════
+-- 7. SOCIAL WORKOUT FEED
+-- ═══════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS public.workout_posts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES public.profiles(id) NOT NULL,
+    workout_name TEXT NOT NULL,
+    muscle_groups TEXT[] DEFAULT '{}',
+    duration_minutes INTEGER DEFAULT 0,
+    total_volume_kg NUMERIC DEFAULT 0,
+    exercise_count INTEGER DEFAULT 0,
+    prs_hit INTEGER DEFAULT 0,
+    caption TEXT DEFAULT '',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_workout_posts_user ON public.workout_posts (user_id, created_at DESC);
+
+ALTER TABLE public.workout_posts ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Workout posts are viewable by everyone."
+ON public.workout_posts FOR SELECT USING (true);
+
+CREATE POLICY "Users can create their own posts."
+ON public.workout_posts FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete their own posts."
+ON public.workout_posts FOR DELETE USING (auth.uid() = user_id);
+
+-- Post Reactions
+CREATE TABLE IF NOT EXISTS public.post_reactions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    post_id UUID REFERENCES public.workout_posts(id) ON DELETE CASCADE NOT NULL,
+    user_id UUID REFERENCES public.profiles(id) NOT NULL,
+    reaction TEXT NOT NULL CHECK (reaction IN ('fire', 'muscle', 'fist')),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(post_id, user_id)
+);
+
+ALTER TABLE public.post_reactions ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Reactions are viewable by everyone."
+ON public.post_reactions FOR SELECT USING (true);
+
+CREATE POLICY "Users can add reactions."
+ON public.post_reactions FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can remove their reactions."
+ON public.post_reactions FOR DELETE USING (auth.uid() = user_id);
+

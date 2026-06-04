@@ -12,6 +12,7 @@ import {
   Alert,
   TextInput,
   Switch,
+  Platform,
 } from 'react-native';
 import { 
   User, Moon, Dumbbell, Timer, PlusCircle, 
@@ -35,7 +36,12 @@ export default function ProfileScreen() {
 
   const router = useRouter();
   const { user, updateProfile, logout, loadDemoData } = useAuthStore();
-  const { theme, unit, defaultRestTimer, isPremium, weeklyGoal, setTheme, setUnit, setDefaultRestTimer, setWeeklyGoal, upgradeToPremium } = useSettingsStore();
+  const { 
+    theme, unit, defaultRestTimer, isPremium, weeklyGoal, 
+    notificationsEnabled, reminderHour, reminderMinute, 
+    setTheme, setUnit, setDefaultRestTimer, setWeeklyGoal, 
+    upgradeToPremium, setNotificationsEnabled, setReminderTime 
+  } = useSettingsStore();
   const [stats, setStats] = useState<any>(null);
   const [bodyweightEntries, setBodyweightEntries] = useState<ProgressEntry[]>([]);
   const [showWeightInput, setShowWeightInput] = useState(false);
@@ -107,6 +113,31 @@ export default function ProfileScreen() {
         },
       ]
     );
+  };
+
+  const handleToggleNotifications = async (value: boolean) => {
+    setNotificationsEnabled(value);
+    
+    const { requestPermissions, scheduleWorkoutReminder, cancelAllReminders } = require('../../lib/notifications');
+    if (value) {
+      const granted = await requestPermissions();
+      if (granted) {
+        await scheduleWorkoutReminder(reminderHour, reminderMinute);
+      } else {
+        setNotificationsEnabled(false);
+        Alert.alert('Permission Denied', 'Please enable notification permissions in your system settings to receive reminders.');
+      }
+    } else {
+      await cancelAllReminders();
+    }
+  };
+
+  const handleSetReminder = async (hour: number, minute: number) => {
+    setReminderTime(hour, minute);
+    if (notificationsEnabled) {
+      const { scheduleWorkoutReminder } = require('../../lib/notifications');
+      await scheduleWorkoutReminder(hour, minute);
+    }
   };
 
   const handleLogout = () => {
@@ -230,22 +261,51 @@ export default function ProfileScreen() {
 
         {/* Trophy Room */}
         <Animated.View entering={FadeInDown.delay(200).springify()} style={styles.section}>
-          <Text style={styles.sectionTitle}>Trophy Room</Text>
-          <View style={styles.badgesContainer}>
-            {['first_workout', 'dedicated_10', 'century_club'].map(badgeId => {
-              const hasBadge = user?.badges?.includes(badgeId);
-              const badgeInfo: Record<string, { Icon: any, name: string }> = {
-                'first_workout': { Icon: Award, name: 'First Steps' },
-                'dedicated_10': { Icon: Zap, name: 'Dedicated' },
-                'century_club': { Icon: Crown, name: 'Century Club' }
-              };
-              const info = badgeInfo[badgeId];
-              const IconComp = info.Icon;
-
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.md }}>
+            <Text style={styles.sectionTitle}>Trophy Room</Text>
+            <Text style={{ color: text.tertiary, fontSize: 11, fontWeight: 'bold' }}>
+              {user?.badges?.length || 0} / 15 Unlocked
+            </Text>
+          </View>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm }}>
+            {[
+              { id: 'first_workout', Icon: Award, name: 'First Steps', desc: 'Complete 1 workout' },
+              { id: 'dedicated_10', Icon: Zap, name: 'Dedicated', desc: 'Complete 10 workouts' },
+              { id: 'quarter_century', Icon: Dumbbell, name: '25 Strong', desc: 'Complete 25 workouts' },
+              { id: 'half_century', Icon: Zap, name: 'Halfway!', desc: 'Complete 50 workouts' },
+              { id: 'century_club', Icon: Crown, name: 'Century Club', desc: 'Complete 100 workouts' },
+              { id: 'iron_veteran', Icon: Crown, name: 'Iron Veteran', desc: 'Complete 250 workouts' },
+              { id: 'week_warrior', Icon: Calendar, name: 'Week Warrior', desc: '7-day streak' },
+              { id: 'iron_will', Icon: Zap, name: 'Iron Will', desc: '30-day streak' },
+              { id: 'unstoppable', Icon: Crown, name: 'Unstoppable', desc: '100-day streak' },
+              { id: 'volume_crusher', Icon: Dumbbell, name: 'Vol. Crusher', desc: '50,000 kg total volume' },
+              { id: 'volume_king', Icon: Crown, name: 'Volume King', desc: '100,000 kg total volume' },
+              { id: 'rising_star', Icon: Award, name: 'Rising Star', desc: 'Reach Level 5' },
+              { id: 'elite_lifter', Icon: Crown, name: 'Elite Lifter', desc: 'Reach Level 10' },
+              { id: 'xp_hunter', Icon: Zap, name: 'XP Hunter', desc: 'Earn 5,000 XP' },
+              { id: 'social_butterfly', Icon: Award, name: 'Social', desc: 'Add 3 friends' },
+            ].map(badge => {
+              const hasBadge = user?.badges?.includes(badge.id);
+              const IconComp = badge.Icon;
               return (
-                <View key={badgeId} style={[styles.badgeItem, !hasBadge && styles.badgeLocked]}>
-                  {hasBadge ? <IconComp size={28} color={accent.red} /> : <ShieldCheck size={28} color={text.tertiary} />}
-                  <Text style={styles.badgeName}>{info.name}</Text>
+                <View key={badge.id} style={{
+                  width: '31%',
+                  backgroundColor: hasBadge ? colors.surfaceElevated : colors.surfaceHighlight,
+                  borderRadius: BorderRadius.lg,
+                  padding: Spacing.md,
+                  alignItems: 'center',
+                  borderWidth: 1,
+                  borderColor: hasBadge ? accent.red : colors.border,
+                  opacity: hasBadge ? 1 : 0.45,
+                  ...Shadows.sm,
+                }}>
+                  {hasBadge ? (
+                    <IconComp size={24} color={accent.red} />
+                  ) : (
+                    <ShieldCheck size={24} color={text.tertiary} />
+                  )}
+                  <Text style={{ color: hasBadge ? text.primary : text.tertiary, fontSize: 10, fontWeight: 'bold', textAlign: 'center', marginTop: 6 }}>{badge.name}</Text>
+                  <Text style={{ color: text.tertiary, fontSize: 8, textAlign: 'center', marginTop: 2 }}>{badge.desc}</Text>
                 </View>
               );
             })}
@@ -415,6 +475,61 @@ export default function ProfileScreen() {
                 <ChevronRight size={16} color={text.tertiary} />
               </View>
             </TouchableOpacity>
+
+            <View style={styles.settingDivider} />
+
+            <View style={styles.settingItem}>
+              <View style={styles.settingLeft}>
+                <View style={styles.settingIconBg}>
+                  <Zap size={18} color={text.primary} />
+                </View>
+                <Text style={styles.settingText}>Workout Reminders</Text>
+              </View>
+              <Switch
+                value={notificationsEnabled}
+                onValueChange={handleToggleNotifications}
+                trackColor={{ false: colors.border, true: accent.red }}
+                thumbColor={Platform.OS === 'ios' ? undefined : colors.surfaceElevated}
+              />
+            </View>
+
+            {notificationsEnabled && (
+              <>
+                <View style={styles.settingDivider} />
+                <TouchableOpacity 
+                  style={styles.settingItem} 
+                  onPress={() => {
+                    Alert.alert(
+                      'Select Reminder Time',
+                      'Choose a time for your daily workout reminder:',
+                      [
+                        { text: '07:00 AM', onPress: () => handleSetReminder(7, 0) },
+                        { text: '09:00 AM', onPress: () => handleSetReminder(9, 0) },
+                        { text: '12:00 PM', onPress: () => handleSetReminder(12, 0) },
+                        { text: '05:00 PM', onPress: () => handleSetReminder(17, 0) },
+                        { text: '06:00 PM', onPress: () => handleSetReminder(18, 0) },
+                        { text: '07:00 PM', onPress: () => handleSetReminder(19, 0) },
+                        { text: '08:00 PM', onPress: () => handleSetReminder(20, 0) },
+                        { text: 'Cancel', style: 'cancel' }
+                      ]
+                    );
+                  }}
+                >
+                  <View style={styles.settingLeft}>
+                    <View style={styles.settingIconBg}>
+                      <Timer size={18} color={text.primary} />
+                    </View>
+                    <Text style={styles.settingText}>Reminder Time</Text>
+                  </View>
+                  <View style={styles.settingRight}>
+                    <Text style={styles.settingValue}>
+                      {`${reminderHour.toString().padStart(2, '0')}:${reminderMinute.toString().padStart(2, '0')} ${reminderHour >= 12 ? 'PM' : 'AM'}`}
+                    </Text>
+                    <ChevronRight size={16} color={text.tertiary} />
+                  </View>
+                </TouchableOpacity>
+              </>
+            )}
           </View>
         </Animated.View>
 

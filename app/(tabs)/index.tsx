@@ -5,6 +5,7 @@
 // ═══════════════════════════════════════════════════════
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { WeeklyReport, getCachedReport, generateWeeklyReport } from '../../lib/weeklyReport';
 import {
   View,
   Text,
@@ -70,6 +71,10 @@ export default function HomeScreen() {
   const [sessionPRs, setSessionPRs] = useState<any[]>([]);
   const [showPRModal, setShowPRModal] = useState(false);
 
+  // AI Weekly Report States
+  const [weeklyReport, setWeeklyReport] = useState<WeeklyReport | null>(null);
+  const [loadingReport, setLoadingReport] = useState(false);
+
   // AI Meal Scanner States
   const [dailyMacros, setDailyMacros] = useState({ protein: 0, carbs: 0, fat: 0, calories: 0 });
   const [showMealModal, setShowMealModal] = useState(false);
@@ -79,6 +84,18 @@ export default function HomeScreen() {
   const [scannedMealResult, setScannedMealResult] = useState<any | null>(null);
   
   const pulseScale = useSharedValue(1);
+
+  const handleGenerateReport = useCallback(async () => {
+    setLoadingReport(true);
+    try {
+      const report = await generateWeeklyReport();
+      setWeeklyReport(report);
+    } catch (e) {
+      Alert.alert('AI Report Error', 'Could not generate report. Check your API key.');
+    } finally {
+      setLoadingReport(false);
+    }
+  }, []);
 
   const loadData = useCallback(async () => {
     try {
@@ -112,6 +129,12 @@ export default function HomeScreen() {
 
       if (storedMacros && storedMacrosDate === todayStr) {
         setDailyMacros(JSON.parse(storedMacros));
+      }
+
+      // Load cached weekly report
+      const cachedReport = await getCachedReport();
+      if (cachedReport) {
+        setWeeklyReport(cachedReport);
       } else {
         const cleared = { protein: 0, carbs: 0, fat: 0, calories: 0 };
         setDailyMacros(cleared);
@@ -576,6 +599,91 @@ export default function HomeScreen() {
               </TouchableOpacity>
             ))}
           </ScrollView>
+        </Animated.View>
+
+        {/* AI Weekly Report Card */}
+        <Animated.View entering={FadeInDown.delay(450).springify()} style={{ marginHorizontal: Spacing.lg, marginBottom: Spacing.lg }}>
+          <View style={{
+            backgroundColor: colors.surfaceElevated,
+            borderRadius: BorderRadius.xl,
+            padding: Spacing.lg,
+            borderWidth: 1,
+            borderColor: weeklyReport ? accent.red : colors.border,
+            ...Shadows.md
+          }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.md }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Sparkles size={18} color={accent.red} />
+                <Text style={{ color: text.primary, fontWeight: 'bold', fontSize: 14 }}>AI Weekly Report</Text>
+              </View>
+              {weeklyReport && (
+                <View style={{
+                  backgroundColor: accent.red,
+                  borderRadius: BorderRadius.full,
+                  paddingHorizontal: 12,
+                  paddingVertical: 4,
+                }}>
+                  <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>{weeklyReport.grade}</Text>
+                </View>
+              )}
+            </View>
+
+            {weeklyReport ? (
+              <View>
+                <Text style={{ color: text.secondary, fontSize: 13, lineHeight: 20, marginBottom: 12 }}>
+                  {weeklyReport.summary}
+                </Text>
+                
+                {weeklyReport.highlights.length > 0 && (
+                  <View style={{ marginBottom: 10 }}>
+                    <Text style={{ color: status.success, fontSize: 11, fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>Highlights</Text>
+                    {weeklyReport.highlights.map((h, i) => (
+                      <Text key={i} style={{ color: text.secondary, fontSize: 12, lineHeight: 18, marginBottom: 3 }}>✦ {h}</Text>
+                    ))}
+                  </View>
+                )}
+
+                {weeklyReport.recommendations.length > 0 && (
+                  <View style={{ marginBottom: 8 }}>
+                    <Text style={{ color: '#3B82F6', fontSize: 11, fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>Recommendations</Text>
+                    {weeklyReport.recommendations.map((r, i) => (
+                      <Text key={i} style={{ color: text.secondary, fontSize: 12, lineHeight: 18, marginBottom: 3 }}>→ {r}</Text>
+                    ))}
+                  </View>
+                )}
+
+                <Text style={{ color: text.tertiary, fontSize: 10, fontStyle: 'italic', marginTop: 4 }}>{weeklyReport.muscle_balance}</Text>
+                
+                <TouchableOpacity 
+                  onPress={handleGenerateReport}
+                  style={{ marginTop: 12, alignItems: 'center', paddingVertical: 8, borderTopWidth: 1, borderTopColor: colors.border }}
+                >
+                  <Text style={{ color: accent.red, fontSize: 12, fontWeight: 'bold' }}>Regenerate Report</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <TouchableOpacity
+                onPress={handleGenerateReport}
+                disabled={loadingReport}
+                style={{
+                  backgroundColor: accent.red,
+                  borderRadius: BorderRadius.lg,
+                  paddingVertical: 12,
+                  alignItems: 'center',
+                  opacity: loadingReport ? 0.7 : 1,
+                }}
+              >
+                {loadingReport ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <ActivityIndicator size="small" color="#fff" />
+                    <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 13 }}>Analyzing your training...</Text>
+                  </View>
+                ) : (
+                  <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 13 }}>Generate Weekly Report</Text>
+                )}
+              </TouchableOpacity>
+            )}
+          </View>
         </Animated.View>
 
         {/* Recent PRs */}

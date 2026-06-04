@@ -31,6 +31,7 @@ import { useAuthStore } from '../stores/authStore';
 import exerciseData from '../data/exercises.json';
 import * as Haptics from 'expo-haptics';
 import { getCustomExercises, saveCustomExercise } from '../lib/storage';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function WorkoutActiveScreen() {
   const { colors, text, accent, status, muscle, isDark } = useThemeColor();
@@ -80,6 +81,11 @@ export default function WorkoutActiveScreen() {
   const [plateTargetWeight, setPlateTargetWeight] = useState<string>('45');
   const scrollRef = useRef<ScrollView>(null);
 
+  // Completion Modal State
+  const [showCompletionModal, setShowCompletionModal] = useState(false);
+  const [completionCaption, setCompletionCaption] = useState('');
+  const [shareToFeed, setShareToFeed] = useState(true);
+
   // Update elapsed time
   useEffect(() => {
     if (!startTime) return;
@@ -125,56 +131,58 @@ export default function WorkoutActiveScreen() {
       return;
     }
 
-    if (Platform.OS === 'web') {
-      if (window.confirm(`Finish Workout?\n${completedSets} set${completedSets > 1 ? 's' : ''} completed. Save this workout?`)) {
-        if (user) {
-          finishWorkout(user.id).then(workout => {
-            if (workout) {
-              try {
-                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-              } catch (hapticError) {
-                console.warn('Haptics failed', hapticError);
-              }
-              router.replace('/(tabs)');
-            }
-          }).catch(err => {
-            console.error('Failed to finish workout:', err);
-            window.alert('Error: Failed to save workout. Please try again.');
-          });
-        }
-      }
-      return;
-    }
+    setShowCompletionModal(true);
+  };
 
-    Alert.alert(
-      'Finish Workout?',
-      `${completedSets} set${completedSets > 1 ? 's' : ''} completed. Save this workout?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Finish',
-          style: 'default',
-          onPress: async () => {
-            if (user) {
-              try {
-                const workout = await finishWorkout(user.id);
-                if (workout) {
-                  try {
-                    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                  } catch (hapticError) {
-                    console.warn('Haptics failed', hapticError);
-                  }
-                  router.replace('/(tabs)');
-                }
-              } catch (err) {
-                console.error('Failed to finish workout:', err);
-                Alert.alert('Error', 'Failed to save workout. Please try again.');
+  const onSaveWorkout = async () => {
+    if (!user) return;
+    try {
+      // Complete the workout via workoutStore
+      const workout = await finishWorkout(user.id);
+      if (workout) {
+        if (shareToFeed) {
+          try {
+            // Retrieve session PRs to count them
+            let prsHit = 0;
+            try {
+              const prsStr = await AsyncStorage.getItem('ironlog_session_prs');
+              if (prsStr) {
+                const prs = JSON.parse(prsStr);
+                prsHit = prs.length;
               }
-            }
-          },
-        },
-      ]
-    );
+            } catch (e) {}
+
+            const { shareWorkout } = require('../lib/feed');
+            await shareWorkout({
+              workout_name: workout.name,
+              muscle_groups: workout.muscle_groups,
+              duration_minutes: workout.duration_minutes,
+              total_volume_kg: workout.total_volume_kg,
+              exercise_count: exercises.length,
+              prs_hit: prsHit,
+              caption: completionCaption.trim()
+            });
+          } catch (feedErr) {
+            console.error('Failed to share workout to feed:', feedErr);
+          }
+        }
+        
+        try {
+          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        } catch (_) {}
+        
+        setShowCompletionModal(false);
+        setCompletionCaption('');
+        router.replace('/(tabs)');
+      }
+    } catch (err) {
+      console.error('Failed to save workout:', err);
+      if (Platform.OS === 'web') {
+        window.alert('Failed to save workout. Please try again.');
+      } else {
+        Alert.alert('Error', 'Failed to save workout. Please try again.');
+      }
+    }
   };
 
   const handleCancel = () => {
@@ -1025,6 +1033,113 @@ export default function WorkoutActiveScreen() {
               onPress={handleApplyPlateWeight}
             >
               <Text style={{ color: '#FFFFFF', fontSize: 16, fontWeight: 'bold' }}>Apply to Set</Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </View>
+      </Modal>
+
+      {/* Workout Completion Modal */}
+      <Modal
+        visible={showCompletionModal}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setShowCompletionModal(false)}
+      >
+        <View style={styles.searchModal}>
+          <View style={styles.searchHeader}>
+            <Text style={styles.searchTitle}>Workout Summary</Text>
+            <TouchableOpacity onPress={() => setShowCompletionModal(false)}>
+              <XCircle size={28} color={text.secondary} />
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView style={{ flex: 1, padding: 16 }} showsVerticalScrollIndicator={false}>
+            {/* Stats Summary Cards */}
+            <View style={{ flexDirection: 'row', gap: 10, marginBottom: 20 }}>
+              <View style={{ flex: 1, backgroundColor: colors.surfaceHighlight, padding: 16, borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: colors.border }}>
+                <Timer size={24} color={accent.red} style={{ marginBottom: 6 }} />
+                <Text style={{ color: text.tertiary, fontSize: 11, fontWeight: 'bold', textTransform: 'uppercase' }}>Duration</Text>
+                <Text style={{ color: text.primary, fontSize: 18, fontWeight: 'bold', marginTop: 2 }}>{elapsedTime}</Text>
+              </View>
+              
+              <View style={{ flex: 1, backgroundColor: colors.surfaceHighlight, padding: 16, borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: colors.border }}>
+                <Dumbbell size={24} color={accent.red} style={{ marginBottom: 6 }} />
+                <Text style={{ color: text.tertiary, fontSize: 11, fontWeight: 'bold', textTransform: 'uppercase' }}>Volume</Text>
+                <Text style={{ color: text.primary, fontSize: 18, fontWeight: 'bold', marginTop: 2 }}>
+                  {exercises.reduce((sum, ex) => sum + ex.sets.filter(s => s.completed).reduce((v, s) => v + s.reps * s.weight_kg, 0), 0)} kg
+                </Text>
+              </View>
+            </View>
+
+            {/* Exercises Completed List */}
+            <View style={{ backgroundColor: colors.surfaceHighlight, padding: 16, borderRadius: 12, borderWidth: 1, borderColor: colors.border, marginBottom: 20 }}>
+              <Text style={{ color: text.secondary, fontWeight: 'bold', fontSize: 13, textTransform: 'uppercase', marginBottom: 10 }}>Completed Exercises</Text>
+              {exercises.map((ex, idx) => {
+                const completedSets = ex.sets.filter(s => s.completed);
+                if (completedSets.length === 0) return null;
+                return (
+                  <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6, borderBottomWidth: idx === exercises.length - 1 ? 0 : 1, borderBottomColor: colors.border }}>
+                    <Text style={{ color: text.primary, fontWeight: '600', fontSize: 14 }}>{ex.name}</Text>
+                    <Text style={{ color: text.secondary, fontSize: 13 }}>{completedSets.length} sets</Text>
+                  </View>
+                );
+              })}
+            </View>
+
+            {/* Optional Caption Input */}
+            <Text style={{ color: text.secondary, fontSize: 14, fontWeight: '600', marginBottom: 8 }}>Caption (Optional)</Text>
+            <TextInput
+              style={[styles.searchInput, { marginHorizontal: 0, paddingHorizontal: 12, marginBottom: 20, height: 80, textAlignVertical: 'top', paddingTop: 10 }]}
+              placeholder="Felt strong today! 💪 How was your workout?"
+              placeholderTextColor={text.tertiary}
+              value={completionCaption}
+              onChangeText={setCompletionCaption}
+              multiline
+              maxLength={200}
+            />
+
+            {/* Share to Feed Toggle */}
+            <TouchableOpacity 
+              style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, backgroundColor: colors.surfaceHighlight, borderRadius: 12, borderWidth: 1, borderColor: colors.border, marginBottom: 24 }}
+              onPress={() => setShareToFeed(prev => !prev)}
+              activeOpacity={0.8}
+            >
+              <View style={{ gap: 4, flex: 1, marginRight: 12 }}>
+                <Text style={{ color: text.primary, fontWeight: 'bold', fontSize: 15 }}>Share to Community Feed</Text>
+                <Text style={{ color: text.tertiary, fontSize: 12 }}>Post this workout to the social feed for comments and reactions.</Text>
+              </View>
+              <View style={{
+                width: 24,
+                height: 24,
+                borderRadius: 6,
+                borderWidth: 2,
+                borderColor: shareToFeed ? accent.red : text.tertiary,
+                backgroundColor: shareToFeed ? accent.red : 'transparent',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                {shareToFeed && <CheckCircle2 size={16} color="#FFF" />}
+              </View>
+            </TouchableOpacity>
+
+            {/* Complete Workout Button */}
+            <TouchableOpacity
+              style={{
+                backgroundColor: accent.red,
+                paddingVertical: 14,
+                borderRadius: 12,
+                alignItems: 'center',
+                justifyContent: 'center',
+                shadowColor: accent.red,
+                shadowOffset: { width: 0, height: 4 },
+                shadowOpacity: 0.3,
+                shadowRadius: 6,
+                elevation: 4,
+                marginBottom: 40
+              }}
+              onPress={onSaveWorkout}
+            >
+              <Text style={{ color: '#FFFFFF', fontSize: 16, fontWeight: 'bold' }}>Complete Workout</Text>
             </TouchableOpacity>
           </ScrollView>
         </View>

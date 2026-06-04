@@ -404,23 +404,46 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const newBadges = [...user.badges];
     let newlyEarned = false;
 
-    // First Workout Badge
-    if (user.total_workouts >= 1 && !newBadges.includes('first_workout')) {
-      newBadges.push('first_workout');
-      newlyEarned = true;
-    }
-    
-    // 10 Workouts Badge
-    if (user.total_workouts >= 10 && !newBadges.includes('dedicated_10')) {
-      newBadges.push('dedicated_10');
-      newlyEarned = true;
-    }
+    const grant = (id: string) => {
+      if (!newBadges.includes(id)) {
+        newBadges.push(id);
+        newlyEarned = true;
+      }
+    };
 
-    // 100 Workouts Badge
-    if (user.total_workouts >= 100 && !newBadges.includes('century_club')) {
-      newBadges.push('century_club');
-      newlyEarned = true;
-    }
+    // ── Workout Count Badges ──
+    if (user.total_workouts >= 1) grant('first_workout');
+    if (user.total_workouts >= 10) grant('dedicated_10');
+    if (user.total_workouts >= 25) grant('quarter_century');
+    if (user.total_workouts >= 50) grant('half_century');
+    if (user.total_workouts >= 100) grant('century_club');
+    if (user.total_workouts >= 250) grant('iron_veteran');
+
+    // ── Streak Badges ──
+    const streak = user.current_streak || user.highest_streak || 0;
+    if (streak >= 7) grant('week_warrior');
+    if (streak >= 30) grant('iron_will');
+    if (streak >= 100) grant('unstoppable');
+
+    // ── Volume Badges (check from stored workouts) ──
+    try {
+      const { getWorkoutStats } = require('../lib/storage');
+      const stats = await getWorkoutStats();
+      if (stats.totalVolume >= 50000) grant('volume_crusher');
+      if (stats.totalVolume >= 100000) grant('volume_king');
+    } catch (e) {}
+
+    // ── XP / Level Badges ──
+    if ((user.level || 1) >= 5) grant('rising_star');
+    if ((user.level || 1) >= 10) grant('elite_lifter');
+    if ((user.xp || 0) >= 5000) grant('xp_hunter');
+
+    // ── Social Badges ──
+    try {
+      const { fetchFriends } = require('../lib/social');
+      const friends = await fetchFriends();
+      if (friends.length >= 3) grant('social_butterfly');
+    } catch (e) {}
 
     if (newlyEarned) {
       const updatedUser = await saveUser({ badges: newBadges });

@@ -10,6 +10,8 @@ import MarkdownText from '../../components/MarkdownText';
 import { getAICoachingAdvice } from '../../lib/gemini';
 import { fetchGlobalLeaderboard, fetchFriends, searchUsers, addFriend, removeFriend, fetchIncomingRequests, acceptFriend, declineFriend } from '../../lib/social';
 import { saveTemplate } from '../../lib/storage';
+import { sendMessage as sendChatMessage, getMessages as getChatMessages } from '../../lib/messaging';
+import { getFeed, addReaction, removeReaction, WorkoutPost } from '../../lib/feed';
 import * as Haptics from 'expo-haptics';
 
 const MOCK_FRIEND_ROUTINES: Record<string, { name: string; muscle_groups: string[]; exercises: { name: string; sets: number; reps: number }[]; prs: { name: string; value: string }[] }> = {
@@ -90,8 +92,12 @@ export default function CommunityScreen() {
   const { colors, text, accent, status, muscle } = useThemeColor();
   const styles = React.useMemo(() => getStyles(colors, text, accent, status, muscle), [colors, text, accent, status, muscle]);
 
-  const [activeTab, setActiveTab] = useState<'leaderboard' | 'friends' | 'routines' | 'ai_coach'>('leaderboard');
+  const [activeTab, setActiveTab] = useState<'leaderboard' | 'friends' | 'routines' | 'ai_coach' | 'feed'>('feed');
   const { user } = useAuthStore();
+
+  // Feed States
+  const [feedPosts, setFeedPosts] = useState<WorkoutPost[]>([]);
+  const [loadingFeed, setLoadingFeed] = useState(false);
 
   // AI Chat Coach States
   const [messages, setMessages] = useState<{ id: string; text: string; sender: 'user' | 'ai'; timestamp: Date }[]>([
@@ -160,6 +166,19 @@ export default function CommunityScreen() {
       }
     };
     loadChats();
+    // Load feed
+    const loadFeedData = async () => {
+      setLoadingFeed(true);
+      try {
+        const posts = await getFeed();
+        setFeedPosts(posts);
+      } catch (e) {
+        console.error('Failed to load feed:', e);
+      } finally {
+        setLoadingFeed(false);
+      }
+    };
+    loadFeedData();
   }, []);
 
   // HTML5 Web Speech Dictation Init
@@ -532,65 +551,51 @@ export default function CommunityScreen() {
     if (!directChatInput.trim() || !activeChatFriend) return;
 
     const friendId = activeChatFriend.id;
-    const newMessage = {
-      id: Math.random().toString(),
-      text: directChatInput,
-      sender: 'me' as const,
-      timestamp: new Date().toISOString()
-    };
+    
+    try {
+      const sentMsg = await sendChatMessage(friendId, directChatInput);
+      
+      const updatedChats: Record<string, { id: string; text: string; sender: 'me' | 'them'; timestamp: string }[]> = {
+        ...chatMessages,
+        [friendId]: [...(chatMessages[friendId] || []), {
+          id: sentMsg.id,
+          text: sentMsg.text,
+          sender: 'me',
+          timestamp: sentMsg.timestamp,
+        }]
+      };
+      setChatMessages(updatedChats);
+      setDirectChatInput('');
 
-    const updatedChats: Record<string, { id: string; text: string; sender: 'me' | 'them'; timestamp: string }[]> = {
-      ...chatMessages,
-      [friendId]: [...(chatMessages[friendId] || []), newMessage]
-    };
-    setChatMessages(updatedChats);
-    await AsyncStorage.setItem('nextrep_chats', JSON.stringify(updatedChats));
-    setDirectChatInput('');
+      if (Platform.OS !== 'web') {
+        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }
+    } catch (e) {
+      console.error('Send message failed:', e);
+    }
+  };
 
+  const handleReaction = async (postId: string, reaction: 'fire' | 'muscle' | 'fist') => {
+    const post = feedPosts.find(p => p.id === postId);
+    if (!post) return;
+    
+    const existingReaction = post.reactions.find(r => r.user_id === user?.id);
+    
     try {
       if (Platform.OS !== 'web') {
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       }
     } catch (h) {}
 
-    setIsFriendTyping(true);
-    setTimeout(async () => {
-      let replyText = "Let's push it! Every single rep counts! 👊";
-      const nameLower = activeChatFriend.name.toLowerCase();
-      
-      if (nameLower.includes('alex')) {
-        replyText = "Hell yeah! Remember, consistency beats everything. See you at the gym! 🏋️‍♂️";
-      } else if (nameLower.includes('sam')) {
-        replyText = "Heavy squats and deadlifts are calling! Let's hit a new PR this week! 🔥";
-      } else if (nameLower.includes('jordan')) {
-        replyText = "No limits! Let's shatter some boundaries today. Let's go! 🚀";
-      } else if (nameLower.includes('sarah')) {
-        replyText = "Absolutely! Time to smash some heavy sets and fuel up. Let's get it! 💪";
-      } else {
-        replyText = `Grinding hard! Let's get that extra rep! 💯`;
-      }
-
-      const replyMessage = {
-        id: Math.random().toString(),
-        text: replyText,
-        sender: 'them' as const,
-        timestamp: new Date().toISOString()
-      };
-
-      const finalChats: Record<string, { id: string; text: string; sender: 'me' | 'them'; timestamp: string }[]> = {
-        ...updatedChats,
-        [friendId]: [...(updatedChats[friendId] || []), replyMessage]
-      };
-      setChatMessages(finalChats);
-      await AsyncStorage.setItem('nextrep_chats', JSON.stringify(finalChats));
-      setIsFriendTyping(false);
-
-      try {
-        if (Platform.OS !== 'web') {
-          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        }
-      } catch (h) {}
-    }, 1500);
+    if (existingReaction && existingReaction.reaction === reaction) {
+      await removeReaction(postId);
+    } else {
+      await addReaction(postId, reaction);
+    }
+    
+    // Refresh feed
+    const updatedFeed = await getFeed();
+    setFeedPosts(updatedFeed);
   };
 
   return (
@@ -600,8 +605,11 @@ export default function CommunityScreen() {
       </View>
 
       <View style={styles.tabSelector}>
+        <TouchableOpacity style={[styles.tab, activeTab === 'feed' && styles.activeTab]} onPress={() => setActiveTab('feed')}>
+          <Text style={[styles.tabText, activeTab === 'feed' && styles.activeTabText]}>Feed</Text>
+        </TouchableOpacity>
         <TouchableOpacity style={[styles.tab, activeTab === 'leaderboard' && styles.activeTab]} onPress={() => setActiveTab('leaderboard')}>
-          <Text style={[styles.tabText, activeTab === 'leaderboard' && styles.activeTabText]}>Leaderboard</Text>
+          <Text style={[styles.tabText, activeTab === 'leaderboard' && styles.activeTabText]}>Board</Text>
         </TouchableOpacity>
         <TouchableOpacity style={[styles.tab, activeTab === 'friends' && styles.activeTab]} onPress={() => setActiveTab('friends')}>
           <Text style={[styles.tabText, activeTab === 'friends' && styles.activeTabText]}>Friends</Text>
@@ -613,6 +621,134 @@ export default function CommunityScreen() {
 
       {activeTab !== 'ai_coach' ? (
         <ScrollView contentContainerStyle={styles.content}>
+
+          {/* ─── FEED TAB ─── */}
+          {activeTab === 'feed' && (
+            <View>
+              <Text style={styles.sectionTitle}>Workout Feed</Text>
+              {loadingFeed && feedPosts.length === 0 ? (
+                <View style={{ paddingVertical: 40, alignItems: 'center', gap: 12 }}>
+                  <ActivityIndicator size="small" color={accent.red} />
+                  <Text style={{ color: text.tertiary, fontStyle: 'italic' }}>Loading Feed...</Text>
+                </View>
+              ) : feedPosts.length === 0 ? (
+                <View style={{ paddingVertical: 40, alignItems: 'center', gap: 12, backgroundColor: colors.surfaceElevated, borderRadius: BorderRadius.xl, borderWidth: 1, borderColor: colors.border }}>
+                  <Text style={{ fontSize: 48 }}>🏋️</Text>
+                  <Text style={{ color: text.primary, fontWeight: 'bold', fontSize: 16 }}>No Posts Yet</Text>
+                  <Text style={{ color: text.tertiary, fontSize: 13, textAlign: 'center', paddingHorizontal: 40 }}>
+                    Complete a workout and share it to start the feed!
+                  </Text>
+                </View>
+              ) : (
+                feedPosts.map(post => {
+                  const timeAgo = getTimeAgo(new Date(post.created_at));
+                  const myReaction = post.reactions.find(r => r.user_id === user?.id);
+                  const reactionCounts = {
+                    fire: post.reactions.filter(r => r.reaction === 'fire').length,
+                    muscle: post.reactions.filter(r => r.reaction === 'muscle').length,
+                    fist: post.reactions.filter(r => r.reaction === 'fist').length,
+                  };
+
+                  return (
+                    <View key={post.id} style={{
+                      backgroundColor: colors.surfaceElevated,
+                      borderRadius: BorderRadius.xl,
+                      padding: Spacing.lg,
+                      marginBottom: Spacing.md,
+                      borderWidth: 1,
+                      borderColor: colors.border,
+                    }}>
+                      {/* Post Header */}
+                      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                        <View style={{
+                          width: 40, height: 40, borderRadius: 20,
+                          backgroundColor: accent.red,
+                          alignItems: 'center', justifyContent: 'center', marginRight: 10
+                        }}>
+                          <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>{post.user_avatar}</Text>
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ color: text.primary, fontWeight: 'bold', fontSize: 14 }}>{post.user_name}</Text>
+                          <Text style={{ color: text.tertiary, fontSize: 11 }}>{timeAgo}</Text>
+                        </View>
+                      </View>
+
+                      {/* Workout Info */}
+                      <Text style={{ color: text.primary, fontWeight: 'bold', fontSize: 16, marginBottom: 8 }}>
+                        {post.workout_name}
+                      </Text>
+
+                      {/* Stats Row */}
+                      <View style={{ flexDirection: 'row', gap: 12, marginBottom: 10 }}>
+                        <View style={{ backgroundColor: colors.surfaceHighlight, borderRadius: BorderRadius.md, paddingHorizontal: 10, paddingVertical: 5 }}>
+                          <Text style={{ color: text.tertiary, fontSize: 9, fontWeight: 'bold', textTransform: 'uppercase' }}>Duration</Text>
+                          <Text style={{ color: text.primary, fontWeight: 'bold', fontSize: 13 }}>{post.duration_minutes}min</Text>
+                        </View>
+                        <View style={{ backgroundColor: colors.surfaceHighlight, borderRadius: BorderRadius.md, paddingHorizontal: 10, paddingVertical: 5 }}>
+                          <Text style={{ color: text.tertiary, fontSize: 9, fontWeight: 'bold', textTransform: 'uppercase' }}>Volume</Text>
+                          <Text style={{ color: text.primary, fontWeight: 'bold', fontSize: 13 }}>{post.total_volume_kg >= 1000 ? `${(post.total_volume_kg / 1000).toFixed(1)}k` : post.total_volume_kg} kg</Text>
+                        </View>
+                        <View style={{ backgroundColor: colors.surfaceHighlight, borderRadius: BorderRadius.md, paddingHorizontal: 10, paddingVertical: 5 }}>
+                          <Text style={{ color: text.tertiary, fontSize: 9, fontWeight: 'bold', textTransform: 'uppercase' }}>Exercises</Text>
+                          <Text style={{ color: text.primary, fontWeight: 'bold', fontSize: 13 }}>{post.exercise_count}</Text>
+                        </View>
+                        {post.prs_hit > 0 && (
+                          <View style={{ backgroundColor: 'rgba(239, 68, 68, 0.15)', borderRadius: BorderRadius.md, paddingHorizontal: 10, paddingVertical: 5 }}>
+                            <Text style={{ color: accent.red, fontSize: 9, fontWeight: 'bold', textTransform: 'uppercase' }}>PRs</Text>
+                            <Text style={{ color: accent.red, fontWeight: 'bold', fontSize: 13 }}>{post.prs_hit} 🏆</Text>
+                          </View>
+                        )}
+                      </View>
+
+                      {/* Muscle Tags */}
+                      {post.muscle_groups.length > 0 && (
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+                          {post.muscle_groups.map(mg => (
+                            <View key={mg} style={{ backgroundColor: colors.surfaceHighlight, borderRadius: BorderRadius.full, paddingHorizontal: 10, paddingVertical: 3 }}>
+                              <Text style={{ color: text.secondary, fontSize: 10, fontWeight: 'bold', textTransform: 'uppercase' }}>{mg}</Text>
+                            </View>
+                          ))}
+                        </View>
+                      )}
+
+                      {/* Caption */}
+                      {post.caption ? (
+                        <Text style={{ color: text.secondary, fontSize: 13, marginBottom: 10, lineHeight: 19 }}>{post.caption}</Text>
+                      ) : null}
+
+                      {/* Reactions */}
+                      <View style={{ flexDirection: 'row', gap: 10, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 10 }}>
+                        {(['fire', 'muscle', 'fist'] as const).map(reaction => {
+                          const emoji = reaction === 'fire' ? '🔥' : reaction === 'muscle' ? '💪' : '👊';
+                          const count = reactionCounts[reaction];
+                          const isActive = myReaction?.reaction === reaction;
+                          return (
+                            <TouchableOpacity
+                              key={reaction}
+                              onPress={() => handleReaction(post.id, reaction)}
+                              style={{
+                                flexDirection: 'row', alignItems: 'center', gap: 4,
+                                backgroundColor: isActive ? 'rgba(239, 68, 68, 0.15)' : colors.surfaceHighlight,
+                                borderRadius: BorderRadius.full,
+                                paddingHorizontal: 12, paddingVertical: 6,
+                                borderWidth: isActive ? 1 : 0,
+                                borderColor: accent.red,
+                              }}
+                            >
+                              <Text style={{ fontSize: 16 }}>{emoji}</Text>
+                              {count > 0 && <Text style={{ color: isActive ? accent.red : text.secondary, fontSize: 12, fontWeight: 'bold' }}>{count}</Text>}
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    </View>
+                  );
+                })
+              )}
+            </View>
+          )}
+
+          {/* ─── LEADERBOARD TAB ─── */}
           {activeTab === 'leaderboard' && (
             <View>
               <Text style={styles.sectionTitle}>Global Leaderboard</Text>
@@ -1332,6 +1468,22 @@ export default function CommunityScreen() {
       )}
     </View>
   );
+}
+
+function getTimeAgo(date: Date): string {
+  const seconds = Math.floor((new Date().getTime() - date.getTime()) / 1000);
+  let interval = Math.floor(seconds / 31536000);
+
+  if (interval >= 1) return interval + 'y ago';
+  interval = Math.floor(seconds / 2592000);
+  if (interval >= 1) return interval + 'mo ago';
+  interval = Math.floor(seconds / 86400);
+  if (interval >= 1) return interval + 'd ago';
+  interval = Math.floor(seconds / 3600);
+  if (interval >= 1) return interval + 'h ago';
+  interval = Math.floor(seconds / 60);
+  if (interval >= 1) return interval + 'm ago';
+  return 'just now';
 }
 
 const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any) => StyleSheet.create({

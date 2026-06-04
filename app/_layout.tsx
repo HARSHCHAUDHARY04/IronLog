@@ -24,8 +24,14 @@ export default function RootLayout() {
 
   useEffect(() => {
     if (loaded) {
-      Promise.all([loadUser(), loadSettings()]).then(() => {
+      Promise.all([loadUser(), loadSettings()]).then(async () => {
         SplashScreen.hideAsync();
+        try {
+          const { requestPermissions } = require('../lib/notifications');
+          await requestPermissions();
+        } catch (e) {
+          console.warn('Failed to request notifications permission on launch:', e);
+        }
       });
     }
   }, [loaded]);

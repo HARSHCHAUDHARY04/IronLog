@@ -10,12 +10,17 @@ interface SettingsState {
   defaultRestTimer: number; // in seconds
   isPremium: boolean;
   weeklyGoal: number; // workouts per week
+  notificationsEnabled: boolean;
+  reminderHour: number;
+  reminderMinute: number;
   
   setTheme: (theme: ThemeType) => void;
   setUnit: (unit: UnitType) => void;
   setDefaultRestTimer: (seconds: number) => void;
   upgradeToPremium: () => void;
   setWeeklyGoal: (goal: number) => void;
+  setNotificationsEnabled: (enabled: boolean) => void;
+  setReminderTime: (hour: number, minute: number) => void;
   loadSettings: () => Promise<void>;
 }
 
@@ -25,6 +30,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   defaultRestTimer: 90,
   isPremium: false,
   weeklyGoal: 3, // default to 3 workouts per week
+  notificationsEnabled: false,
+  reminderHour: 18, // 6 PM default
+  reminderMinute: 0,
 
   setTheme: async (theme) => {
     set({ theme });
@@ -51,14 +59,28 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     await AsyncStorage.setItem('settings_weekly_goal', goal.toString());
   },
 
+  setNotificationsEnabled: async (enabled) => {
+    set({ notificationsEnabled: enabled });
+    await AsyncStorage.setItem('settings_notifications', enabled ? 'true' : 'false');
+  },
+
+  setReminderTime: async (hour, minute) => {
+    set({ reminderHour: hour, reminderMinute: minute });
+    await AsyncStorage.setItem('settings_reminder_hour', hour.toString());
+    await AsyncStorage.setItem('settings_reminder_minute', minute.toString());
+  },
+
   loadSettings: async () => {
     try {
-      const [theme, unit, rest, premium, weekly] = await Promise.all([
+      const [theme, unit, rest, premium, weekly, notifications, remHour, remMin] = await Promise.all([
         AsyncStorage.getItem('settings_theme'),
         AsyncStorage.getItem('settings_unit'),
         AsyncStorage.getItem('settings_rest'),
         AsyncStorage.getItem('settings_premium'),
         AsyncStorage.getItem('settings_weekly_goal'),
+        AsyncStorage.getItem('settings_notifications'),
+        AsyncStorage.getItem('settings_reminder_hour'),
+        AsyncStorage.getItem('settings_reminder_minute'),
       ]);
       
       set({
@@ -67,9 +89,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         defaultRestTimer: rest ? parseInt(rest, 10) : 90,
         isPremium: premium === 'true',
         weeklyGoal: weekly ? parseInt(weekly, 10) : 3,
+        notificationsEnabled: notifications === 'true',
+        reminderHour: remHour ? parseInt(remHour, 10) : 18,
+        reminderMinute: remMin ? parseInt(remMin, 10) : 0,
       });
     } catch (e) {
       console.error('Failed to load settings', e);
     }
   }
 }));
+
