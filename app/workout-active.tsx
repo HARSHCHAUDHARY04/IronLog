@@ -47,6 +47,7 @@ export default function WorkoutActiveScreen() {
     restTimerRunning,
     restTimerSeconds,
     restTimerDefault,
+    restTimerStartedAt,
     setWorkoutName,
     addExercise,
     removeExercise,
@@ -60,6 +61,7 @@ export default function WorkoutActiveScreen() {
     finishWorkout,
     cancelWorkout,
     reorderExercise,
+    setExerciseNotes,
   } = useWorkoutStore();
 
   const [showExerciseSearch, setShowExerciseSearch] = useState(false);
@@ -79,11 +81,13 @@ export default function WorkoutActiveScreen() {
   const [activePlateExIdx, setActivePlateExIdx] = useState<number | null>(null);
   const [activePlateSetIdx, setActivePlateSetIdx] = useState<number | null>(null);
   const [plateTargetWeight, setPlateTargetWeight] = useState<string>('45');
+  const [barWeight, setBarWeight] = useState<number>(20);
   const scrollRef = useRef<ScrollView>(null);
 
-  // Completion Modal State
+  // Completion Modal & Notes State
   const [showCompletionModal, setShowCompletionModal] = useState(false);
   const [completionCaption, setCompletionCaption] = useState('');
+  const [workoutNotes, setWorkoutNotes] = useState('');
   const [shareToFeed, setShareToFeed] = useState(true);
 
   // Update elapsed time
@@ -98,25 +102,39 @@ export default function WorkoutActiveScreen() {
     return () => clearInterval(interval);
   }, [startTime]);
 
-  // Rest timer countdown
+  // Rest timer countdown (persisted wall-clock timer)
   useEffect(() => {
-    if (!restTimerRunning) {
+    if (!restTimerRunning || !restTimerStartedAt) {
       setRestTimeLeft(0);
       return;
     }
-    setRestTimeLeft(restTimerSeconds);
+
+    const calcLeft = () => {
+      const elapsed = Math.floor((Date.now() - new Date(restTimerStartedAt).getTime()) / 1000);
+      const remaining = restTimerSeconds - elapsed;
+      return Math.max(0, remaining);
+    };
+
+    const initialLeft = calcLeft();
+    setRestTimeLeft(initialLeft);
+
+    if (initialLeft <= 0) {
+      stopRestTimer();
+      return;
+    }
+
     const interval = setInterval(() => {
-      setRestTimeLeft(prev => {
-        if (prev <= 1) {
-          stopRestTimer();
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          return 0;
-        }
-        return prev - 1;
-      });
+      const remaining = calcLeft();
+      setRestTimeLeft(remaining);
+      if (remaining <= 0) {
+        stopRestTimer();
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        clearInterval(interval);
+      }
     }, 1000);
+
     return () => clearInterval(interval);
-  }, [restTimerRunning, restTimerSeconds]);
+  }, [restTimerRunning, restTimerSeconds, restTimerStartedAt]);
 
   const handleFinish = () => {
     const completedSets = exercises.reduce((sum, ex) => 
@@ -137,8 +155,8 @@ export default function WorkoutActiveScreen() {
   const onSaveWorkout = async () => {
     if (!user) return;
     try {
-      // Complete the workout via workoutStore
-      const workout = await finishWorkout(user.id);
+      // Complete the workout via workoutStore with workout notes
+      const workout = await finishWorkout(user.id, workoutNotes);
       if (workout) {
         if (shareToFeed) {
           try {
@@ -330,7 +348,6 @@ export default function WorkoutActiveScreen() {
 
   const calculatedPlatesList = React.useMemo(() => {
     const target = parseFloat(plateTargetWeight) || 0;
-    const barWeight = 20;
     if (target <= barWeight) return [];
     
     let remainingSide = (target - barWeight) / 2;
@@ -343,7 +360,7 @@ export default function WorkoutActiveScreen() {
       }
     }
     return result;
-  }, [plateTargetWeight]);
+  }, [plateTargetWeight, barWeight]);
 
   const handleApplyPlateWeight = () => {
     if (activePlateExIdx !== null && activePlateSetIdx !== null) {
@@ -480,10 +497,11 @@ export default function WorkoutActiveScreen() {
 
               {/* Set Header */}
               <View style={styles.setHeader}>
-                <Text style={[styles.setHeaderText, { width: 36 }]}>SET</Text>
+                <Text style={[styles.setHeaderText, { width: 32 }]}>SET</Text>
                 <Text style={[styles.setHeaderText, { flex: 1, textAlign: 'center' }]}>KG</Text>
                 <Text style={[styles.setHeaderText, { flex: 1, textAlign: 'center' }]}>REPS</Text>
-                <Text style={[styles.setHeaderText, { width: 44, textAlign: 'center' }]}>✓</Text>
+                <Text style={[styles.setHeaderText, { width: 42, textAlign: 'center' }]}>RPE</Text>
+                <Text style={[styles.setHeaderText, { width: 40, textAlign: 'center' }]}>✓</Text>
               </View>
 
               {/* Sets */}
@@ -528,6 +546,32 @@ export default function WorkoutActiveScreen() {
                       selectTextOnFocus
                       editable={!set.completed}
                     />
+
+                    {/* RPE Selector Button */}
+                    <TouchableOpacity
+                      style={{
+                        width: 38,
+                        height: 38,
+                        borderRadius: 8,
+                        backgroundColor: set.rpe ? accent.redGlow : colors.surfaceHighlight,
+                        borderWidth: 1,
+                        borderColor: set.rpe ? accent.red : colors.border,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        marginHorizontal: 2,
+                      }}
+                      onPress={() => {
+                        if (set.completed) return;
+                        // Cycle RPE: undefined -> 6 -> 7 -> 8 -> 9 -> 10 -> undefined
+                        const currentRPE = set.rpe || 5;
+                        const nextRPE = currentRPE >= 10 ? undefined : currentRPE + 1;
+                        updateSet(exIdx, setIdx, { rpe: nextRPE && nextRPE >= 6 ? nextRPE : undefined });
+                      }}
+                    >
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: set.rpe ? accent.red : text.tertiary }}>
+                        {set.rpe ? `@${set.rpe}` : '@-'}
+                      </Text>
+                    </TouchableOpacity>
 
                     <TouchableOpacity
                       style={[styles.checkButton, set.completed && styles.checkButtonDone]}
@@ -979,11 +1023,34 @@ export default function WorkoutActiveScreen() {
               </View>
             </View>
 
+            {/* Barbell Weight Selector */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 12 }}>
+              <Text style={{ color: text.tertiary, fontSize: 12, fontWeight: 'bold' }}>BAR WEIGHT:</Text>
+              {[10, 15, 20, 25].map(bw => (
+                <TouchableOpacity
+                  key={bw}
+                  style={{
+                    paddingHorizontal: 10,
+                    paddingVertical: 4,
+                    borderRadius: 6,
+                    backgroundColor: barWeight === bw ? accent.red : colors.surfaceHighlight,
+                    borderWidth: 1,
+                    borderColor: barWeight === bw ? accent.red : colors.border,
+                  }}
+                  onPress={() => setBarWeight(bw)}
+                >
+                  <Text style={{ color: barWeight === bw ? '#FFF' : text.secondary, fontSize: 12, fontWeight: 'bold' }}>
+                    {bw}kg
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
             <Text style={{ color: text.secondary, textAlign: 'center', fontSize: 14, marginBottom: 20, fontWeight: '500' }}>
-              {parseFloat(plateTargetWeight) <= 20 ? (
-                "Empty 20kg Barbell"
+              {parseFloat(plateTargetWeight) <= barWeight ? (
+                `Empty ${barWeight}kg Barbell`
               ) : (
-                `20kg Bar + ${calculatedPlatesList.map(p => `${p.label}kg`).join(' + ')} on each side`
+                `${barWeight}kg Bar + ${calculatedPlatesList.map(p => `${p.label}kg`).join(' + ')} on each side`
               )}
             </Text>
 
@@ -1086,10 +1153,22 @@ export default function WorkoutActiveScreen() {
               })}
             </View>
 
-            {/* Optional Caption Input */}
-            <Text style={{ color: text.secondary, fontSize: 14, fontWeight: '600', marginBottom: 8 }}>Caption (Optional)</Text>
+            {/* Workout Notes Input */}
+            <Text style={{ color: text.secondary, fontSize: 14, fontWeight: '600', marginBottom: 8 }}>Workout Notes (Private)</Text>
             <TextInput
-              style={[styles.searchInput, { marginHorizontal: 0, paddingHorizontal: 12, marginBottom: 20, height: 80, textAlignVertical: 'top', paddingTop: 10 }]}
+              style={[styles.searchInput, { marginHorizontal: 0, paddingHorizontal: 12, marginBottom: 16, height: 60, textAlignVertical: 'top', paddingTop: 8 }]}
+              placeholder="Felt extra energetic today, updated bench form..."
+              placeholderTextColor={text.tertiary}
+              value={workoutNotes}
+              onChangeText={setWorkoutNotes}
+              multiline
+              maxLength={300}
+            />
+
+            {/* Optional Caption Input */}
+            <Text style={{ color: text.secondary, fontSize: 14, fontWeight: '600', marginBottom: 8 }}>Caption (Social Feed)</Text>
+            <TextInput
+              style={[styles.searchInput, { marginHorizontal: 0, paddingHorizontal: 12, marginBottom: 20, height: 60, textAlignVertical: 'top', paddingTop: 8 }]}
               placeholder="Felt strong today! 💪 How was your workout?"
               placeholderTextColor={text.tertiary}
               value={completionCaption}

@@ -5,10 +5,7 @@
 import { create } from 'zustand';
 import { User, getUser, saveUser, clearAllData, seedDemoData } from '../lib/storage';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import * as WebBrowser from 'expo-web-browser';
 import * as Linking from 'expo-linking';
-
-WebBrowser.maybeCompleteAuthSession();
 
 interface AuthState {
   user: User | null;
@@ -254,6 +251,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       console.log('--- OAUTH DATA URL IS: ---', data?.url);
 
       if (data?.url) {
+        const WebBrowser = require('expo-web-browser');
+        WebBrowser.maybeCompleteAuthSession();
         const result = await WebBrowser.openAuthSessionAsync(
           data.url,
           redirectUrl,
@@ -265,7 +264,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           const urlStr = result.url;
           const paramsString = urlStr.split('#')[1] || urlStr.split('?')[1];
           if (paramsString) {
-            const params = paramsString.split('&').reduce((acc, current) => {
+            const params = paramsString.split('&').reduce((acc: Record<string, string>, current: string) => {
               const [key, value] = current.split('=');
               if (key && value) {
                 acc[key] = decodeURIComponent(value);

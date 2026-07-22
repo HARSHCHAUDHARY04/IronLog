@@ -4,8 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, useThemeColor, Spacing, BorderRadius, FontSize, FontWeight } from '../../lib/theme';
 import { useAuthStore } from '../../stores/authStore';
-import { Sparkles, Send, Brain, Bot, Volume2, VolumeX, Mic } from 'lucide-react-native';
-import * as Speech from 'expo-speech';
+import { Sparkles, Send, Brain, Bot } from 'lucide-react-native';
 import MarkdownText from '../../components/MarkdownText';
 import { getAICoachingAdvice } from '../../lib/gemini';
 import { fetchGlobalLeaderboard, fetchFriends, searchUsers, addFriend, removeFriend, fetchIncomingRequests, acceptFriend, declineFriend } from '../../lib/social';
@@ -112,25 +111,7 @@ export default function CommunityScreen() {
   const [isAIResponding, setIsAIResponding] = useState(false);
 
   // Voice playback state
-  const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
 
-  // Voice recording states
-  const [isListening, setIsListening] = useState(false);
-  const [recognition, setRecognition] = useState<any>(null);
-
-  // Stop speaking when leaving tab or unmounting
-  useEffect(() => {
-    return () => {
-      Speech.stop();
-    };
-  }, []);
-
-  useEffect(() => {
-    if (activeTab !== 'ai_coach') {
-      Speech.stop();
-      setSpeakingMessageId(null);
-    }
-  }, [activeTab]);
 
   useEffect(() => {
     const loadChats = async () => {
@@ -180,158 +161,6 @@ export default function CommunityScreen() {
     };
     loadFeedData();
   }, []);
-
-  // HTML5 Web Speech Dictation Init
-  useEffect(() => {
-    if (Platform.OS === 'web') {
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (SpeechRecognition) {
-        const rec = new SpeechRecognition();
-        rec.continuous = false;
-        rec.interimResults = false;
-        rec.lang = 'en-US';
-
-        rec.onstart = () => {
-          setIsListening(true);
-        };
-
-        rec.onresult = (event: any) => {
-          const transcript = event.results[0][0].transcript;
-          setInputMessage(prev => prev + (prev ? ' ' : '') + transcript);
-        };
-
-        rec.onerror = (event: any) => {
-          console.error('Speech recognition error:', event.error);
-          setIsListening(false);
-          if (Platform.OS === 'web') {
-            if (event.error === 'not-allowed') {
-              alert("Microphone Access Denied!\n\nPlease click the lock or settings icon in your browser's address bar and enable Microphone permissions to use voice dictation.");
-            } else if (event.error === 'no-speech') {
-              console.log('No speech detected.');
-            } else {
-              alert(`Speech recognition failed: ${event.error}\n\n💡 Note: Browsers disable Speech Recognition on insecure IP-address connections. Please load the site via 'localhost:8081' or 'https' to use this feature.`);
-            }
-          }
-        };
-
-        rec.onend = () => {
-          setIsListening(false);
-        };
-
-        setRecognition(rec);
-      }
-    }
-  }, []);
-
-  const toggleListening = () => {
-    if (!recognition) {
-      if (Platform.OS !== 'web') {
-        Alert.alert(
-          "Mobile Voice Typing Dictation",
-          "For high-accuracy voice input on iOS and Android:\n\n1. Tap the text input field.\n2. When the keyboard opens, tap the keyboard microphone button (🎤) next to your space bar!\n\nThis system-level dictation is fast, offline-capable, and works natively.",
-          [{ text: "Got it!" }]
-        );
-      } else {
-        alert("Speech recognition is not supported in this browser. Please use Chrome, Safari, or Edge over localhost or HTTPS.");
-      }
-      return;
-    }
-
-    try {
-      if (isListening) {
-        recognition.stop();
-      } else {
-        recognition.start();
-      }
-    } catch (err: any) {
-      console.error(err);
-      if (Platform.OS === 'web') {
-        alert(`Failed to start speech recognition: ${err.message || String(err)}`);
-      }
-    }
-  };
-
-  const handleSpeak = async (messageId: string, textToSpeak: string) => {
-    if (speakingMessageId === messageId) {
-      try {
-        Speech.stop();
-      } catch (e) {
-        console.error('Speech.stop failed:', e);
-      }
-      setSpeakingMessageId(null);
-      return;
-    }
-
-    try {
-      Speech.stop();
-    } catch (e) {}
-
-    setSpeakingMessageId(messageId);
-
-    // Clean markdown formatting before speaking so the coach sounds highly natural
-    const cleanText = textToSpeak
-      .replace(/[\*\#\-\`\>\_\n]/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    console.log('[Speaker] Starting TTS playback for:', cleanText);
-
-    try {
-      Speech.speak(cleanText, {
-        rate: 0.95,
-        pitch: 1.0,
-        onStart: () => {
-          console.log('[Speaker] Speech started successfully via expo-speech');
-        },
-        onDone: () => {
-          console.log('[Speaker] Speech finished naturally');
-          setSpeakingMessageId(null);
-        },
-        onError: (err: any) => {
-          console.error('[Speaker] expo-speech error:', err);
-          setSpeakingMessageId(null);
-          
-          if (Platform.OS === 'web') {
-            console.log('[Speaker] Attempting direct browser HTML5 speechSynthesis fallback...');
-            try {
-              window.speechSynthesis.cancel();
-              const utterance = new SpeechSynthesisUtterance(cleanText);
-              utterance.rate = 0.95;
-              utterance.pitch = 1.0;
-              utterance.onend = () => setSpeakingMessageId(null);
-              utterance.onerror = () => setSpeakingMessageId(null);
-              window.speechSynthesis.speak(utterance);
-              setSpeakingMessageId(messageId);
-              console.log('[Speaker] Direct browser fallback activated successfully!');
-            } catch (fallbackErr) {
-              console.error('[Speaker] Direct browser fallback failed:', fallbackErr);
-            }
-          }
-        },
-      });
-    } catch (speechErr) {
-      console.error('[Speaker] expo-speech speak command failed:', speechErr);
-      setSpeakingMessageId(null);
-
-      // Direct Web fallback if the expo-speech package has a loading/linkage crash on Web
-      if (Platform.OS === 'web') {
-        console.log('[Speaker] Attempting direct browser HTML5 speechSynthesis fallback after crash...');
-        try {
-          window.speechSynthesis.cancel();
-          const utterance = new SpeechSynthesisUtterance(cleanText);
-          utterance.rate = 0.95;
-          utterance.pitch = 1.0;
-          utterance.onend = () => setSpeakingMessageId(null);
-          utterance.onerror = () => setSpeakingMessageId(null);
-          window.speechSynthesis.speak(utterance);
-          setSpeakingMessageId(messageId);
-          console.log('[Speaker] Direct browser fallback activated after package crash!');
-        } catch (fallbackErr) {
-          console.error('[Speaker] Direct browser fallback failed:', fallbackErr);
-        }
-      }
-    }
-  };
 
   const SUGGESTED_PROMPTS = [
     "Break a bench press plateau",
@@ -1179,24 +1008,6 @@ export default function CommunityScreen() {
                           {msg.text}
                         </Text>
                       )}
-                      
-                      {isAI && (
-                        <TouchableOpacity
-                          style={{
-                            position: 'absolute',
-                            right: 6,
-                            bottom: 6,
-                            padding: 4,
-                          }}
-                          onPress={() => handleSpeak(msg.id, msg.text)}
-                        >
-                          {speakingMessageId === msg.id ? (
-                            <Volume2 size={16} color="#EAB308" />
-                          ) : (
-                            <VolumeX size={16} color={text.tertiary} />
-                          )}
-                        </TouchableOpacity>
-                      )}
                     </View>
                   );
                 })}
@@ -1261,21 +1072,6 @@ export default function CommunityScreen() {
                 onChangeText={setInputMessage}
                 onSubmitEditing={() => handleSendMessage(inputMessage)}
               />
-              <TouchableOpacity
-                style={{
-                  backgroundColor: isListening ? '#EF4444' : colors.surfaceHighlight,
-                  width: 44,
-                  height: 44,
-                  borderRadius: 22,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderWidth: 1,
-                  borderColor: isListening ? '#EF4444' : colors.border
-                }}
-                onPress={toggleListening}
-              >
-                <Mic size={18} color={isListening ? '#FFF' : text.secondary} />
-              </TouchableOpacity>
               <TouchableOpacity
                 style={{
                   backgroundColor: '#EAB308',

@@ -9,18 +9,20 @@ import {
   ScrollView,
   TouchableOpacity,
   StyleSheet,
+  TextInput,
   RefreshControl,
   Alert,
 } from 'react-native';
 import { 
   ChevronLeft, ChevronRight, Dumbbell, 
-  ChevronUp, ChevronDown, Clock, Activity, Flame, Crown
+  ChevronUp, ChevronDown, Clock, Activity, Flame, Crown, Search
 } from 'lucide-react-native';
 import { useFocusEffect } from 'expo-router';
 import Animated, { FadeInDown, Layout } from 'react-native-reanimated';
 import { useThemeColor, Spacing, BorderRadius, FontSize, FontWeight, Shadows } from '../../lib/theme';
 import { getWorkouts, getWorkoutDatesForMonth, Workout, deleteWorkout } from '../../lib/storage';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { displayWeight } from '../../lib/units';
 import { LinearGradient } from 'expo-linear-gradient';
 
 export default function HistoryScreen() {
@@ -33,6 +35,7 @@ export default function HistoryScreen() {
   const [selectedWorkout, setSelectedWorkout] = useState<Workout | null>(null);
   const [calendarMonth, setCalendarMonth] = useState(new Date());
   const [workoutDates, setWorkoutDates] = useState<string[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const loadData = useCallback(async () => {
     const [w, dates] = await Promise.all([
@@ -105,9 +108,18 @@ export default function HistoryScreen() {
   };
 
   const formatVolume = (v: number) => {
-    if (v >= 1000) return `${(v / 1000).toFixed(1)}k kg`;
-    return `${v} kg`;
+    return displayWeight(v);
   };
+
+  const filteredWorkouts = React.useMemo(() => {
+    if (!searchQuery.trim()) return workouts;
+    const q = searchQuery.toLowerCase();
+    return workouts.filter(w => 
+      w.name.toLowerCase().includes(q) ||
+      w.muscle_groups.some(mg => mg.toLowerCase().includes(q)) ||
+      w.exercises.some(e => e.exercise_name.toLowerCase().includes(q))
+    );
+  }, [workouts, searchQuery]);
 
   return (
     <View style={styles.container}>
@@ -186,16 +198,44 @@ export default function HistoryScreen() {
         </Animated.View>
 
         {/* Workout List */}
-        <Text style={styles.sectionTitle}>Training Log</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: Spacing.md }}>
+          <Text style={styles.sectionTitle}>Training Log</Text>
+        </View>
 
-        {workouts.length === 0 ? (
+        {/* Search Bar */}
+        <View style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          backgroundColor: colors.surface,
+          borderRadius: BorderRadius.md,
+          paddingHorizontal: Spacing.md,
+          marginBottom: Spacing.lg,
+          borderWidth: 1,
+          borderColor: colors.border,
+        }}>
+          <Search size={18} color={text.tertiary} style={{ marginRight: Spacing.sm }} />
+          <TextInput
+            style={{
+              flex: 1,
+              color: text.primary,
+              fontSize: FontSize.md,
+              paddingVertical: Spacing.md,
+            }}
+            placeholder="Search workouts or exercises..."
+            placeholderTextColor={text.tertiary}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+          />
+        </View>
+
+        {filteredWorkouts.length === 0 ? (
           <Animated.View entering={FadeInDown.delay(200).springify()} style={styles.emptyState}>
             <Dumbbell size={48} color={text.tertiary} style={{ marginBottom: Spacing.md }} />
-            <Text style={styles.emptyText}>No workouts yet</Text>
-            <Text style={styles.emptySubtext}>Your past workouts will appear here.</Text>
+            <Text style={styles.emptyText}>{searchQuery ? 'No matching workouts' : 'No workouts yet'}</Text>
+            <Text style={styles.emptySubtext}>{searchQuery ? 'Try a different search term.' : 'Your past workouts will appear here.'}</Text>
           </Animated.View>
         ) : (
-          (isPremium ? workouts : workouts.slice(0, 5)).map((workout, index) => (
+          (isPremium ? filteredWorkouts : filteredWorkouts.slice(0, 5)).map((workout, index) => (
             <Animated.View key={workout.id} layout={Layout.springify()}>
               <Animated.View 
                 entering={FadeInDown.delay(200 + index * 50).springify()}
@@ -263,7 +303,7 @@ export default function HistoryScreen() {
                                   {s.is_warmup ? 'W' : `Set ${s.set_number}`}
                                 </Text>
                                 <Text style={styles.detailSetValues}>
-                                  {s.weight_kg} kg × {s.reps}
+                                  {displayWeight(s.weight_kg)} × {s.reps}
                                   {s.rpe ? `  @RPE${s.rpe}` : ''}
                                 </Text>
                               </View>

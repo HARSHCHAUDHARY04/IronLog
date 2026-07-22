@@ -37,6 +37,7 @@ interface WorkoutState {
   restTimerRunning: boolean;
   restTimerSeconds: number;
   restTimerDefault: number;
+  restTimerStartedAt: string | null;
 
   // Actions
   startWorkout: (name?: string) => void;
@@ -53,7 +54,7 @@ interface WorkoutState {
   startRestTimer: (seconds?: number) => void;
   stopRestTimer: () => void;
   setRestTimerDefault: (seconds: number) => void;
-  finishWorkout: (userId: string) => Promise<Workout | null>;
+  finishWorkout: (userId: string, notes?: string) => Promise<Workout | null>;
   cancelWorkout: () => void;
   reorderExercise: (fromIndex: number, toIndex: number) => void;
 }
@@ -111,6 +112,7 @@ export const useWorkoutStore = create<WorkoutState>()(
       restTimerRunning: false,
       restTimerSeconds: 0,
       restTimerDefault: 90,
+      restTimerStartedAt: null,
 
       startWorkout: (name?: string) => {
         set({
@@ -277,19 +279,21 @@ export const useWorkoutStore = create<WorkoutState>()(
 
       startRestTimer: (seconds?: number) => {
         const { restTimerDefault } = get();
+        const duration = seconds || restTimerDefault;
         set({
           restTimerRunning: true,
-          restTimerSeconds: seconds || restTimerDefault,
+          restTimerSeconds: duration,
+          restTimerStartedAt: new Date().toISOString(),
         });
       },
 
       stopRestTimer: () => {
-        set({ restTimerRunning: false, restTimerSeconds: 0 });
+        set({ restTimerRunning: false, restTimerSeconds: 0, restTimerStartedAt: null });
       },
 
       setRestTimerDefault: (seconds: number) => set({ restTimerDefault: seconds }),
 
-      finishWorkout: async (userId: string) => {
+      finishWorkout: async (userId: string, notes?: string) => {
         try {
           const { workoutName, startTime, exercises } = get();
 
@@ -344,7 +348,7 @@ export const useWorkoutStore = create<WorkoutState>()(
             name: workoutName,
             muscle_groups: Array.from(muscleGroupsSet),
             duration_minutes: durationMinutes,
-            notes: '',
+            notes: notes || '',
             total_volume_kg: Math.round(totalVolume),
             exercises: workoutExercises,
           });
@@ -429,6 +433,7 @@ export const useWorkoutStore = create<WorkoutState>()(
             exercises: [],
             restTimerRunning: false,
             restTimerSeconds: 0,
+            restTimerStartedAt: null,
           });
 
           return workout;

@@ -21,7 +21,7 @@ export default function OnboardingScreen() {
   const styles = React.useMemo(() => getStyles(colors, text, accent, status, muscle), [colors, text, accent, status, muscle]);
 
   const router = useRouter();
-  const { completeOnboarding, loadDemoData } = useAuthStore();
+  const { completeOnboarding } = useAuthStore();
   const [step, setStep] = useState(1);
 
   // User data
@@ -43,8 +43,6 @@ export default function OnboardingScreen() {
       weight_kg: parseFloat(weight) || undefined,
       age: parseInt(age) || undefined,
     });
-    // Let's seed demo data if they're a new user during onboarding
-    await loadDemoData();
     router.replace('/(tabs)');
   };
 

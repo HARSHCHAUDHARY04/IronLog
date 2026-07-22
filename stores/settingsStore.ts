@@ -13,6 +13,7 @@ interface SettingsState {
   notificationsEnabled: boolean;
   reminderHour: number;
   reminderMinute: number;
+  streakGraceDays: number; // Max allowed days gap between workouts (1 = strict, 2 = 1 rest day, 3 = 2 rest days)
   
   setTheme: (theme: ThemeType) => void;
   setUnit: (unit: UnitType) => void;
@@ -21,6 +22,7 @@ interface SettingsState {
   setWeeklyGoal: (goal: number) => void;
   setNotificationsEnabled: (enabled: boolean) => void;
   setReminderTime: (hour: number, minute: number) => void;
+  setStreakGraceDays: (days: number) => void;
   loadSettings: () => Promise<void>;
 }
 
@@ -33,6 +35,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   notificationsEnabled: false,
   reminderHour: 18, // 6 PM default
   reminderMinute: 0,
+  streakGraceDays: 2, // 1 rest day allowed by default
 
   setTheme: async (theme) => {
     set({ theme });
@@ -70,9 +73,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     await AsyncStorage.setItem('settings_reminder_minute', minute.toString());
   },
 
+  setStreakGraceDays: async (days) => {
+    set({ streakGraceDays: days });
+    await AsyncStorage.setItem('settings_streak_grace', days.toString());
+  },
+
   loadSettings: async () => {
     try {
-      const [theme, unit, rest, premium, weekly, notifications, remHour, remMin] = await Promise.all([
+      const [theme, unit, rest, premium, weekly, notifications, remHour, remMin, grace] = await Promise.all([
         AsyncStorage.getItem('settings_theme'),
         AsyncStorage.getItem('settings_unit'),
         AsyncStorage.getItem('settings_rest'),
@@ -81,6 +89,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         AsyncStorage.getItem('settings_notifications'),
         AsyncStorage.getItem('settings_reminder_hour'),
         AsyncStorage.getItem('settings_reminder_minute'),
+        AsyncStorage.getItem('settings_streak_grace'),
       ]);
       
       set({
@@ -92,6 +101,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         notificationsEnabled: notifications === 'true',
         reminderHour: remHour ? parseInt(remHour, 10) : 18,
         reminderMinute: remMin ? parseInt(remMin, 10) : 0,
+        streakGraceDays: grace ? parseInt(grace, 10) : 2,
       });
     } catch (e) {
       console.error('Failed to load settings', e);
