@@ -6,6 +6,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { generateGeminiContent } from './gemini';
 import { getWorkouts, getWorkoutStats, getPRs } from './storage';
+import { toLocalDateStr, startOfWeek } from './date';
 
 const REPORT_CACHE_KEY = 'ironlog_weekly_report';
 const REPORT_DATE_KEY = 'ironlog_weekly_report_date';
@@ -25,7 +26,7 @@ export interface WeeklyReport {
 export async function getCachedReport(): Promise<WeeklyReport | null> {
   try {
     const dateStr = await AsyncStorage.getItem(REPORT_DATE_KEY);
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = toLocalDateStr();
     
     if (dateStr === todayStr) {
       const cached = await AsyncStorage.getItem(REPORT_CACHE_KEY);
@@ -48,13 +49,9 @@ export async function generateWeeklyReport(): Promise<WeeklyReport> {
     getPRs(),
   ]);
 
-  const now = new Date();
-  const startOfWeek = new Date(now);
-  startOfWeek.setDate(now.getDate() - now.getDay());
-  startOfWeek.setHours(0, 0, 0, 0);
-
-  const thisWeekWorkouts = workouts.filter(w => new Date(w.workout_date) >= startOfWeek);
-  const thisWeekPRs = prs.filter(p => new Date(p.achieved_at) >= startOfWeek);
+  const weekStart = toLocalDateStr(startOfWeek());
+  const thisWeekWorkouts = workouts.filter(w => w.workout_date >= weekStart);
+  const thisWeekPRs = prs.filter(p => p.achieved_at.slice(0, 10) >= weekStart);
 
   // Build muscle group summary
   const muscleGroups: Record<string, number> = {};
@@ -122,7 +119,7 @@ Based on this data, provide a structured weekly report card. Be specific, tactic
   };
 
   // Cache the report
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = toLocalDateStr();
   await AsyncStorage.setItem(REPORT_CACHE_KEY, JSON.stringify(report));
   await AsyncStorage.setItem(REPORT_DATE_KEY, todayStr);
 

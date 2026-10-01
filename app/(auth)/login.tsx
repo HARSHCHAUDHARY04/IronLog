@@ -34,27 +34,29 @@ export default function LoginScreen() {
 
   const handleGoogleLogin = async () => {
     setIsLoading(true);
-    const success = await signInWithGoogle();
+    const result = await signInWithGoogle();
     setIsLoading(false);
-    if (success) {
+    if (result.ok) {
       router.replace('/');
+    } else if (!result.error.includes('cancelled')) {
+      Alert.alert('Google Sign-In Failed', result.error);
     }
   };
 
   const handleLogin = async () => {
-    if (!email || !password) {
+    if (!email.trim() || !password) {
       Alert.alert('Error', 'Please fill in all fields');
       return;
     }
 
     setIsLoading(true);
-    const success = await login(email, password);
+    const result = await login(email.trim().toLowerCase(), password);
     setIsLoading(false);
 
-    if (success) {
+    if (result.ok) {
       router.replace('/');
     } else {
-      Alert.alert('Error', 'Invalid email or password');
+      Alert.alert('Sign In Failed', result.error);
     }
   };
 

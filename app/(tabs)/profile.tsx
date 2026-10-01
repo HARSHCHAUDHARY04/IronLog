@@ -17,25 +17,28 @@ import {
 import { 
   User, Moon, Dumbbell, Timer, PlusCircle, 
   LogOut, Database, Edit3, X, Crown, ShieldCheck,
-  ChevronRight, Award, Zap, Calendar
+  ChevronRight, Award, Zap, Calendar, Trash2
 } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from 'expo-router';
 import Animated, { FadeInDown } from 'react-native-reanimated';
-import { useThemeColor, Spacing, BorderRadius, FontSize, FontWeight, Shadows } from '../../lib/theme';
+import { useThemeColor, Spacing, BorderRadius, FontSize, FontWeight, Shadows, Fonts } from '../../lib/theme';
 import { useAuthStore } from '../../stores/authStore';
-import { getWorkoutStats, getProgressEntries, saveProgressEntry, ProgressEntry } from '../../lib/storage';
+import { getWorkoutStats, getProgressEntries, saveProgressEntry, ProgressEntry, canSeedDemoData, getWorkouts } from '../../lib/storage';
+import { toLocalDateStr } from '../../lib/date';
+import appConfig from '../../app.json';
 import { LinearGradient } from 'expo-linear-gradient';
 
-import { useSettingsStore } from '../../stores/settingsStore';
-import { displayWeight, parseInputToKg } from '../../lib/units';
+import { useSettingsStore, PAYWALL_ENABLED } from '../../stores/settingsStore';
+import { displayWeight, parseInputToKg, toDisplayWeight, fromDisplayWeight, displayVolume } from '../../lib/units';
 
 export default function ProfileScreen() {
-  const { colors, text, accent, status, muscle, isDark } = useThemeColor();
+  const { colors, text, accent, status, muscle, isDark, gradients } = useThemeColor();
   const styles = React.useMemo(() => getStyles(colors, text, accent, status, muscle, isDark), [colors, text, accent, status, muscle, isDark]);
 
   const router = useRouter();
-  const { user, updateProfile, logout, loadDemoData } = useAuthStore();
+  const { user, updateProfile, logout, deleteAccount, pendingBeforeLogout, loadDemoData } = useAuthStore();
+  const [demoAvailable, setDemoAvailable] = useState(false);
   const { 
     theme, unit, defaultRestTimer, isPremium, weeklyGoal, 
     notificationsEnabled, reminderHour, reminderMinute, 
@@ -54,8 +57,9 @@ export default function ProfileScreen() {
   const [editGoal, setEditGoal] = useState('');
 
   const loadData = useCallback(async () => {
-    const [s, bw] = await Promise.all([getWorkoutStats(), getProgressEntries()]);
+    const [s, bw, demoOk] = await Promise.all([getWorkoutStats(), getProgressEntries(), canSeedDemoData()]);
     setStats(s);
+    setDemoAvailable(demoOk);
     setBodyweightEntries(bw);
   }, []);
 
@@ -70,7 +74,7 @@ export default function ProfileScreen() {
     await saveProgressEntry({
       user_id: user?.id || '',
       body_weight: weightInKg,
-      date: new Date().toISOString().split('T')[0],
+      date: toLocalDateStr(),
     });
     setNewWeight('');
     setShowWeightInput(false);
@@ -80,17 +84,21 @@ export default function ProfileScreen() {
   const handleEditProfile = () => {
     setEditName(user?.name || '');
     setEditAge(user?.age?.toString() || '');
-    setEditWeight(user?.weight_kg?.toString() || '');
+    setEditWeight(user?.weight_kg ? toDisplayWeight(user.weight_kg).toString() : '');
     setEditHeight(user?.height_cm?.toString() || '');
     setEditGoal(user?.goal || 'general_fitness');
     setIsEditing(true);
   };
 
   const handleSaveProfile = async () => {
+    if (!editName.trim()) {
+      Alert.alert('Name required', 'Please enter your name.');
+      return;
+    }
     await updateProfile({
-      name: editName,
+      name: editName.trim(),
       age: parseInt(editAge) || undefined,
-      weight_kg: parseFloat(editWeight) || undefined,
+      weight_kg: parseFloat(editWeight) ? fromDisplayWeight(parseFloat(editWeight)) : undefined,
       height_cm: parseFloat(editHeight) || undefined,
       goal: editGoal as any,
     });
@@ -106,23 +114,29 @@ export default function ProfileScreen() {
         {
           text: 'Load',
           onPress: async () => {
-            await loadDemoData();
-            await loadData();
-            Alert.alert('Done!', 'Demo data loaded. Check your dashboard and analytics!');
+            try {
+              await loadDemoData();
+              await loadData();
+              Alert.alert('Done!', 'Demo data loaded. Check your dashboard and analytics!');
+            } catch (e: any) {
+              Alert.alert('Not available', e?.message || 'Could not load demo data.');
+            }
           },
         },
       ]
     );
   };
 
+  const lastWorkoutDate = async () => (await getWorkouts())[0]?.workout_date;
+
   const handleToggleNotifications = async (value: boolean) => {
     setNotificationsEnabled(value);
-    
-    const { requestPermissions, scheduleWorkoutReminder, cancelAllReminders } = require('../../lib/notifications');
+
+    const { requestPermissions, scheduleWorkoutReminders, cancelAllReminders } = require('../../lib/notifications');
     if (value) {
       const granted = await requestPermissions();
       if (granted) {
-        await scheduleWorkoutReminder(reminderHour, reminderMinute);
+        await scheduleWorkoutReminders(reminderHour, reminderMinute, await lastWorkoutDate());
       } else {
         setNotificationsEnabled(false);
         Alert.alert('Permission Denied', 'Please enable notification permissions in your system settings to receive reminders.');
@@ -135,24 +149,51 @@ export default function ProfileScreen() {
   const handleSetReminder = async (hour: number, minute: number) => {
     setReminderTime(hour, minute);
     if (notificationsEnabled) {
-      const { scheduleWorkoutReminder } = require('../../lib/notifications');
-      await scheduleWorkoutReminder(hour, minute);
+      const { scheduleWorkoutReminders } = require('../../lib/notifications');
+      await scheduleWorkoutReminders(hour, minute, await lastWorkoutDate());
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    const pending = await pendingBeforeLogout();
+    const message = pending > 0
+      ? `${pending} workout change${pending === 1 ? '' : 's'} haven't synced yet (you seem to be offline). Signing out now will lose them. Sign out anyway?`
+      : 'Your data is synced to the cloud. This device will be cleared.';
+
     Alert.alert(
       'Sign Out',
-      'This will clear all local data. Are you sure?',
+      message,
       [
         { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Sign Out', 
-          style: 'destructive', 
+        {
+          text: 'Sign Out',
+          style: 'destructive',
           onPress: async () => {
             await logout();
             router.replace('/(auth)/login');
-          } 
+          }
+        },
+      ]
+    );
+  };
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      'Delete Account',
+      'This permanently deletes your account, workouts, PRs, friends, messages and posts. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete Forever',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteAccount();
+              router.replace('/(auth)/login');
+            } catch (e: any) {
+              Alert.alert('Could not delete account', e?.message || 'Please try again while online.');
+            }
+          },
         },
       ]
     );
@@ -188,11 +229,11 @@ export default function ProfileScreen() {
             colors={[colors.surfaceElevated, colors.surface]}
             style={styles.profileGradient}
           >
-            <View style={styles.avatar}>
+            <LinearGradient colors={gradients.ember as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.avatar}>
               <Text style={styles.avatarText}>
                 {(user?.name || 'U').charAt(0).toUpperCase()}
               </Text>
-            </View>
+            </LinearGradient>
             <View style={styles.profileInfo}>
               <View style={styles.profileNameRow}>
                 <Text style={styles.profileName}>{user?.name || 'Lifter'}</Text>
@@ -216,7 +257,12 @@ export default function ProfileScreen() {
                 return (
                   <View style={styles.xpContainer}>
                     <View style={styles.xpBarBg}>
-                      <View style={[styles.xpBarFill, { width: `${percent}%` }]} />
+                      <LinearGradient
+                        colors={gradients.ember as any}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 0 }}
+                        style={[styles.xpBarFill, { width: `${percent}%` }]}
+                      />
                     </View>
                     <Text style={styles.xpText}>{user.xp || 0} / {nextLevelXP} XP</Text>
                   </View>
@@ -250,11 +296,9 @@ export default function ProfileScreen() {
             <View style={styles.quickStatDivider} />
             <View style={styles.quickStatItem}>
               <Text style={styles.quickStatValue}>
-                {stats.totalVolume >= 1000
-                  ? `${(stats.totalVolume / 1000).toFixed(0)}k`
-                  : stats.totalVolume}
+                {displayVolume(stats.totalVolume).split(' ')[0]}
               </Text>
-              <Text style={styles.quickStatLabel}>Vol (kg)</Text>
+              <Text style={styles.quickStatLabel}>Vol ({unit})</Text>
             </View>
           </Animated.View>
         )}
@@ -364,20 +408,15 @@ export default function ProfileScreen() {
           )}
         </Animated.View>
 
-        {/* Subscription (Luxurious Metallic) */}
+        {/* Subscription — hidden until real billing exists */}
+        {PAYWALL_ENABLED && (
         <Animated.View entering={FadeInDown.delay(300).springify()} style={styles.section}>
           <Text style={styles.sectionTitle}>Subscription</Text>
           <TouchableOpacity 
             style={styles.subscriptionCard} 
             activeOpacity={0.85}
             onPress={() => {
-              if (!isPremium) {
-                Alert.alert(
-                  'Premium Unlocked!', 
-                  'For this demo, we have granted you premium access automatically.',
-                  [{ text: 'Awesome', onPress: upgradeToPremium }]
-                );
-              }
+              if (!isPremium) upgradeToPremium();
             }}
           >
             <LinearGradient
@@ -400,6 +439,7 @@ export default function ProfileScreen() {
             </LinearGradient>
           </TouchableOpacity>
         </Animated.View>
+        )}
 
         {/* Settings */}
         <Animated.View entering={FadeInDown.delay(350).springify()} style={styles.section}>
@@ -537,25 +577,40 @@ export default function ProfileScreen() {
         <Animated.View entering={FadeInDown.delay(400).springify()} style={styles.section}>
           <Text style={styles.sectionTitle}>Account Actions</Text>
           <View style={styles.settingsGroup}>
-            <TouchableOpacity style={styles.settingItem} onPress={handleLoadDemo}>
-              <View style={styles.settingLeft}>
-                <Database size={20} color={status.info} />
-                <Text style={[styles.settingText, { color: status.info }]}>Load Demo Data</Text>
-              </View>
-            </TouchableOpacity>
-            <View style={styles.settingDivider} />
+            {demoAvailable && (
+              <>
+                <TouchableOpacity style={styles.settingItem} onPress={handleLoadDemo}>
+                  <View style={styles.settingLeft}>
+                    <Database size={20} color={status.info} />
+                    <Text style={[styles.settingText, { color: status.info }]}>Load Demo Data</Text>
+                  </View>
+                </TouchableOpacity>
+                <View style={styles.settingDivider} />
+              </>
+            )}
             <TouchableOpacity style={styles.settingItem} onPress={handleLogout}>
               <View style={styles.settingLeft}>
                 <LogOut size={20} color={accent.red} />
                 <Text style={[styles.settingText, { color: accent.red }]}>Sign Out</Text>
               </View>
             </TouchableOpacity>
+            {!demoAvailable && (
+              <>
+                <View style={styles.settingDivider} />
+                <TouchableOpacity style={styles.settingItem} onPress={handleDeleteAccount}>
+                  <View style={styles.settingLeft}>
+                    <Trash2 size={20} color={accent.red} />
+                    <Text style={[styles.settingText, { color: accent.red }]}>Delete Account</Text>
+                  </View>
+                </TouchableOpacity>
+              </>
+            )}
           </View>
         </Animated.View>
 
         {/* App Info */}
         <View style={styles.appInfo}>
-          <Text style={styles.appInfoText}>Next Rep v2.0.0</Text>
+          <Text style={styles.appInfoText}>Next Rep v{appConfig.expo.version}</Text>
           <Text style={styles.appInfoText}>Every Rep Counts.</Text>
           <Text style={[styles.appInfoText, { marginTop: Spacing.sm }]}>
             Crafted for lifters
@@ -593,7 +648,7 @@ export default function ProfileScreen() {
               placeholderTextColor={text.tertiary}
             />
 
-            <Text style={styles.inputLabel}>Weight (kg)</Text>
+            <Text style={styles.inputLabel}>Weight ({unit})</Text>
             <TextInput
               style={styles.input}
               value={editWeight}
@@ -656,10 +711,12 @@ const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any
   },
   title: {
     color: text.primary,
-    fontSize: FontSize['3xl'],
-    fontWeight: FontWeight.extrabold,
     marginBottom: Spacing['2xl'],
-    letterSpacing: -0.5,
+    fontFamily: Fonts.displayHeavy,
+    fontSize: 40,
+    lineHeight: 44,
+    textTransform: 'uppercase',
+    letterSpacing: 0.2,
   },
 
   // Profile card
@@ -686,8 +743,8 @@ const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any
   },
   avatarText: {
     color: '#fff',
-    fontSize: FontSize['3xl'],
-    fontWeight: FontWeight.extrabold,
+    fontFamily: Fonts.displayHeavy,
+    fontSize: 36,
   },
   profileInfo: {
     flex: 1,
@@ -700,8 +757,10 @@ const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any
   },
   profileName: {
     color: text.primary,
-    fontSize: FontSize.xl,
-    fontWeight: FontWeight.bold,
+    fontFamily: Fonts.display,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+    fontSize: 28,
   },
   levelBadge: {
     backgroundColor: accent.red,
@@ -738,7 +797,6 @@ const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any
   },
   xpBarFill: {
     height: '100%',
-    backgroundColor: status.warning,
     borderRadius: 3,
   },
   xpText: {
@@ -777,8 +835,8 @@ const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any
   },
   quickStatValue: {
     color: text.primary,
-    fontSize: FontSize['2xl'],
-    fontWeight: FontWeight.extrabold,
+    fontFamily: Fonts.displayHeavy,
+    fontSize: 30,
   },
   quickStatLabel: {
     color: text.tertiary,
@@ -831,11 +889,11 @@ const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any
   },
   sectionTitle: {
     color: text.secondary,
-    fontSize: FontSize.sm,
-    fontWeight: FontWeight.bold,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
     marginBottom: Spacing.md,
+    fontFamily: Fonts.display,
+    fontSize: 18,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
   },
 
   // Weight tracking
@@ -899,9 +957,9 @@ const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any
   weightValue: {
     color: text.primary,
     fontSize: FontSize.sm,
-    fontWeight: FontWeight.bold,
     width: 45,
     textAlign: 'right',
+    fontFamily: Fonts.displayHeavy,
   },
   emptyWeight: {
     backgroundColor: colors.surfaceElevated,

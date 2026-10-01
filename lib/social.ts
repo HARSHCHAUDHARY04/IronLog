@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase, isSupabaseConfigured } from './supabase';
-import { getUser, User } from './storage';
+import { getLocalUser, generateId } from './storage';
 
 export interface SocialUser {
   id: string;
@@ -18,13 +18,26 @@ export interface FriendRelation {
   status: 'pending' | 'accepted' | 'incoming';
 }
 
+export interface SharedRoutine {
+  id: string;
+  creator_id: string;
+  name: string;
+  description: string;
+  exercises: { name: string; sets: number; reps: number }[];
+  downloads: number;
+  created_at: string;
+}
+
 const KEYS = {
   FRIENDS: 'ironlog_social_friends',
   PENDING_REQUESTS: 'ironlog_social_pending',
   ALL_USERS: 'ironlog_social_users_pool',
 };
 
-// Seed initial pool of mock users for local/offline fallback
+// Mock users exist ONLY for offline mode (no Supabase configured).
+// With Supabase configured, errors surface as errors — never fake people.
+const useMocks = !isSupabaseConfigured;
+
 const INITIAL_MOCK_USERS: SocialUser[] = [
   { id: 'mock-1', name: 'Alex Johnson', xp: 14500, level: 12, avatar: 'A' },
   { id: 'mock-2', name: 'Sam Smith', xp: 12200, level: 11, avatar: 'S' },
@@ -33,337 +46,253 @@ const INITIAL_MOCK_USERS: SocialUser[] = [
   { id: 'mock-5', name: 'Chris Evans', xp: 1100, level: 3, avatar: 'C' },
 ];
 
-/**
- * Ensures mock users pool exists in AsyncStorage
- */
-async function ensureMockPool() {
-  const data = await AsyncStorage.getItem(KEYS.ALL_USERS);
-  if (!data) {
-    await AsyncStorage.setItem(KEYS.ALL_USERS, JSON.stringify(INITIAL_MOCK_USERS));
+async function readJSON<T>(key: string, fallback: T): Promise<T> {
+  try {
+    const raw = await AsyncStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
   }
+}
 
-  const friends = await AsyncStorage.getItem(KEYS.FRIENDS);
-  const pending = await AsyncStorage.getItem(KEYS.PENDING_REQUESTS);
-  if (!friends && !pending) {
-    const incomingReq = [
-      { id: 'mock-3', name: 'Jordan Davis', xp: 2500, level: 5, avatar: 'J' }
-    ];
-    await AsyncStorage.setItem(KEYS.PENDING_REQUESTS, JSON.stringify(incomingReq));
+async function getMockPool(): Promise<SocialUser[]> {
+  const pool = await readJSON<SocialUser[] | null>(KEYS.ALL_USERS, null);
+  if (pool) return pool;
+  await AsyncStorage.setItem(KEYS.ALL_USERS, JSON.stringify(INITIAL_MOCK_USERS));
+  return INITIAL_MOCK_USERS;
+}
+
+function profileName(u: any, fallback = 'Anonymous Lifter'): string {
+  return u?.display_name || u?.username || fallback;
+}
+
+function toSocialUser(u: any, meId?: string): SocialUser {
+  const name = profileName(u);
+  return {
+    id: u.id,
+    name,
+    xp: u.xp || 0,
+    level: u.level || 1,
+    avatar: name.charAt(0).toUpperCase(),
+    isMe: meId ? u.id === meId : false,
+  };
+}
+
+// Select display_name when the migration has added it, else fall back
+async function selectProfiles<T>(
+  build: (columns: string) => PromiseLike<{ data: T | null; error: any }>
+): Promise<T> {
+  let res = await build('id, username, display_name, level, xp');
+  if (res.error && (res.error.code === '42703' || res.error.code === 'PGRST204')) {
+    res = await build('id, username, level, xp');
   }
+  if (res.error) throw new Error(res.error.message);
+  return res.data as T;
 }
 
 /**
  * Fetch the global leaderboard
  */
 export async function fetchGlobalLeaderboard(limitNum = 20): Promise<SocialUser[]> {
-  const currentUser = await getUser();
-  
-  if (isSupabaseConfigured) {
-    try {
-      const { data, error } = await supabase.rpc('get_global_leaderboard', { limit_num: limitNum });
-      if (!error && data) {
-        return data.map((u: any) => ({
-          id: u.id,
-          name: u.username || u.name || 'Anonymous Lifter',
-          xp: u.xp || 0,
-          level: u.level || 1,
-          avatar: u.avatar_url || (u.username || 'A').charAt(0).toUpperCase(),
-          isMe: currentUser ? u.id === currentUser.id : false,
-        }));
-      }
-      console.warn('Leaderboard RPC failed, falling back to direct profiles query:', error);
-      
-      const { data: profiles, error: profError } = await supabase
-        .from('profiles')
-        .select('id, username, level, xp')
-        .order('xp', { ascending: false })
-        .limit(limitNum);
-        
-      if (!profError && profiles) {
-        return profiles.map((u: any) => ({
-          id: u.id,
-          name: u.username || 'Anonymous Lifter',
-          xp: u.xp || 0,
-          level: u.level || 1,
-          avatar: (u.username || 'A').charAt(0).toUpperCase(),
-          isMe: currentUser ? u.id === currentUser.id : false,
-        }));
-      }
-    } catch (e) {
-      console.error('Failed to communicate with Supabase leaderboard:', e);
-    }
+  const currentUser = await getLocalUser();
+
+  if (!useMocks) {
+    const { data, error } = await supabase.rpc('get_global_leaderboard', { limit_num: limitNum });
+    if (!error && data) return (data as any[]).map(u => toSocialUser(u, currentUser?.id));
+
+    const profiles = await selectProfiles<any[]>(cols =>
+      supabase.from('profiles').select(cols).order('xp', { ascending: false }).limit(limitNum)
+    );
+    return profiles.map(u => toSocialUser(u, currentUser?.id));
   }
 
-  // --- MOCK FALLBACK ---
-  await ensureMockPool();
-  const poolStr = await AsyncStorage.getItem(KEYS.ALL_USERS);
-  const pool: SocialUser[] = poolStr ? JSON.parse(poolStr) : INITIAL_MOCK_USERS;
-
-  // Add the current user to the leaderboard pool
+  const pool = [...(await getMockPool())];
   if (currentUser) {
-    const userInPool = pool.find(u => u.id === currentUser.id);
-    if (!userInPool) {
-      pool.push({
-        id: currentUser.id,
-        name: currentUser.name || 'You',
-        xp: currentUser.xp || 0,
-        level: currentUser.level || 1,
-        avatar: (currentUser.name || 'Y').charAt(0).toUpperCase(),
-        isMe: true,
-      });
-    } else {
-      userInPool.xp = currentUser.xp;
-      userInPool.level = currentUser.level;
-    }
+    pool.push({
+      id: currentUser.id,
+      name: currentUser.name || 'You',
+      xp: currentUser.xp || 0,
+      level: currentUser.level || 1,
+      avatar: (currentUser.name || 'Y').charAt(0).toUpperCase(),
+      isMe: true,
+    });
   }
-
-  return pool
-    .sort((a, b) => b.xp - a.xp)
-    .slice(0, limitNum)
-    .map((item, idx) => ({ ...item, rank: idx + 1 }));
+  return pool.sort((a, b) => b.xp - a.xp).slice(0, limitNum);
 }
 
 /**
  * Fetch incoming pending friend requests
  */
 export async function fetchIncomingRequests(): Promise<SocialUser[]> {
-  const currentUser = await getUser();
+  const currentUser = await getLocalUser();
   if (!currentUser) return [];
 
-  if (isSupabaseConfigured) {
-    try {
-      const { data, error } = await supabase
-        .from('friends')
-        .select(`
-          user_id_1,
-          profiles:user_id_1 (id, username, level, xp)
-        `)
-        .eq('user_id_2', currentUser.id)
-        .eq('status', 'pending');
+  if (!useMocks) {
+    const { data, error } = await supabase
+      .from('friends')
+      .select('user_id_1')
+      .eq('user_id_2', currentUser.id)
+      .eq('status', 'pending');
+    if (error) throw new Error(error.message);
 
-      if (!error && data) {
-        return data.map((item: any) => {
-          const u = item.profiles;
-          return {
-            id: u.id,
-            name: u.username || 'Anonymous Lifter',
-            xp: u.xp || 0,
-            level: u.level || 1,
-            avatar: (u.username || 'A').charAt(0).toUpperCase(),
-          };
-        });
-      }
-    } catch (e) {
-      console.error('Failed to fetch incoming Supabase requests:', e);
-    }
+    const ids = (data || []).map((r: any) => r.user_id_1);
+    if (ids.length === 0) return [];
+    const profiles = await selectProfiles<any[]>(cols => supabase.from('profiles').select(cols).in('id', ids));
+    return profiles.map(u => toSocialUser(u));
   }
 
-  // --- MOCK FALLBACK ---
-  await ensureMockPool();
-  const data = await AsyncStorage.getItem(KEYS.PENDING_REQUESTS);
-  return data ? JSON.parse(data) : [];
+  return readJSON<SocialUser[]>(KEYS.PENDING_REQUESTS, []);
 }
 
 /**
  * Accept a friend request
  */
 export async function acceptFriend(friendId: string): Promise<boolean> {
-  const currentUser = await getUser();
+  const currentUser = await getLocalUser();
   if (!currentUser) return false;
 
-  if (isSupabaseConfigured) {
-    try {
-      const { error } = await supabase
-        .from('friends')
-        .update({ status: 'accepted' })
-        .eq('user_id_1', friendId)
-        .eq('user_id_2', currentUser.id);
-
-      if (!error) return true;
-    } catch (e) {
-      console.error('Failed to accept Supabase friend request:', e);
-    }
-  }
-
-  // --- MOCK FALLBACK ---
-  await ensureMockPool();
-  const pendingStr = await AsyncStorage.getItem(KEYS.PENDING_REQUESTS);
-  let pending: SocialUser[] = pendingStr ? JSON.parse(pendingStr) : [];
-  const target = pending.find(u => u.id === friendId);
-
-  if (target) {
-    pending = pending.filter(u => u.id !== friendId);
-    await AsyncStorage.setItem(KEYS.PENDING_REQUESTS, JSON.stringify(pending));
-
-    const friendsStr = await AsyncStorage.getItem(KEYS.FRIENDS);
-    const friends: SocialUser[] = friendsStr ? JSON.parse(friendsStr) : [];
-    if (!friends.some(f => f.id === friendId)) {
-      friends.push(target);
-      await AsyncStorage.setItem(KEYS.FRIENDS, JSON.stringify(friends));
-    }
+  if (!useMocks) {
+    const { error } = await supabase
+      .from('friends')
+      .update({ status: 'accepted' })
+      .eq('user_id_1', friendId)
+      .eq('user_id_2', currentUser.id);
+    if (error) throw new Error(error.message);
     return true;
   }
-  return false;
+
+  let pending = await readJSON<SocialUser[]>(KEYS.PENDING_REQUESTS, []);
+  const target = pending.find(u => u.id === friendId);
+  if (!target) return false;
+  pending = pending.filter(u => u.id !== friendId);
+  await AsyncStorage.setItem(KEYS.PENDING_REQUESTS, JSON.stringify(pending));
+  const friends = await readJSON<SocialUser[]>(KEYS.FRIENDS, []);
+  if (!friends.some(f => f.id === friendId)) {
+    friends.push(target);
+    await AsyncStorage.setItem(KEYS.FRIENDS, JSON.stringify(friends));
+  }
+  return true;
 }
 
 /**
  * Decline/Ignore a friend request
  */
 export async function declineFriend(friendId: string): Promise<boolean> {
-  const currentUser = await getUser();
+  const currentUser = await getLocalUser();
   if (!currentUser) return false;
 
-  if (isSupabaseConfigured) {
-    try {
-      const { error } = await supabase
-        .from('friends')
-        .delete()
-        .eq('user_id_1', friendId)
-        .eq('user_id_2', currentUser.id);
-
-      if (!error) return true;
-    } catch (e) {
-      console.error('Failed to decline Supabase friend request:', e);
-    }
+  if (!useMocks) {
+    const { error } = await supabase
+      .from('friends')
+      .delete()
+      .eq('user_id_1', friendId)
+      .eq('user_id_2', currentUser.id);
+    if (error) throw new Error(error.message);
+    return true;
   }
 
-  // --- MOCK FALLBACK ---
-  await ensureMockPool();
-  const pendingStr = await AsyncStorage.getItem(KEYS.PENDING_REQUESTS);
-  if (pendingStr) {
-    const pending: SocialUser[] = JSON.parse(pendingStr);
-    const filtered = pending.filter(u => u.id !== friendId);
-    await AsyncStorage.setItem(KEYS.PENDING_REQUESTS, JSON.stringify(filtered));
-  }
+  const pending = await readJSON<SocialUser[]>(KEYS.PENDING_REQUESTS, []);
+  await AsyncStorage.setItem(KEYS.PENDING_REQUESTS, JSON.stringify(pending.filter(u => u.id !== friendId)));
   return true;
 }
 
 /**
- * Fetch list of friends
+ * Fetch list of accepted friends
  */
 export async function fetchFriends(): Promise<SocialUser[]> {
-  const currentUser = await getUser();
+  const currentUser = await getLocalUser();
   if (!currentUser) return [];
 
-  if (isSupabaseConfigured) {
-    try {
-      const { data, error } = await supabase
-        .from('friends')
-        .select(`
-          id,
-          status,
-          user_id_1,
-          user_id_2
-        `)
-        .eq('status', 'accepted')
-        .or(`user_id_1.eq.${currentUser.id},user_id_2.eq.${currentUser.id}`);
+  if (!useMocks) {
+    const { data, error } = await supabase
+      .from('friends')
+      .select('user_id_1, user_id_2')
+      .eq('status', 'accepted')
+      .or(`user_id_1.eq.${currentUser.id},user_id_2.eq.${currentUser.id}`);
+    if (error) throw new Error(error.message);
 
-      if (!error && data) {
-        const friendIds = data.map(rel => rel.user_id_1 === currentUser.id ? rel.user_id_2 : rel.user_id_1);
-        if (friendIds.length > 0) {
-          const { data: profiles, error: profError } = await supabase
-            .from('profiles')
-            .select('id, username, level, xp')
-            .in('id', friendIds);
-
-          if (!profError && profiles) {
-            return profiles.map((u: any) => ({
-              id: u.id,
-              name: u.username || 'Anonymous Friend',
-              xp: u.xp || 0,
-              level: u.level || 1,
-              avatar: (u.username || 'F').charAt(0).toUpperCase(),
-            }));
-          }
-        }
-        return [];
-      }
-    } catch (e) {
-      console.error('Failed to fetch Supabase friends:', e);
-    }
+    const friendIds = (data || []).map((rel: any) =>
+      rel.user_id_1 === currentUser.id ? rel.user_id_2 : rel.user_id_1
+    );
+    if (friendIds.length === 0) return [];
+    const profiles = await selectProfiles<any[]>(cols => supabase.from('profiles').select(cols).in('id', friendIds));
+    return profiles.map(u => toSocialUser(u));
   }
 
-  // --- MOCK FALLBACK ---
-  const data = await AsyncStorage.getItem(KEYS.FRIENDS);
-  return data ? JSON.parse(data) : [];
+  return readJSON<SocialUser[]>(KEYS.FRIENDS, []);
+}
+
+/** Ids of users with a pending request in either direction */
+export async function fetchOutgoingRequestIds(): Promise<string[]> {
+  const currentUser = await getLocalUser();
+  if (!currentUser || useMocks) return [];
+  const { data, error } = await supabase
+    .from('friends')
+    .select('user_id_2')
+    .eq('user_id_1', currentUser.id)
+    .eq('status', 'pending');
+  if (error) return [];
+  return (data || []).map((r: any) => r.user_id_2);
 }
 
 /**
  * Search users in the app
  */
 export async function searchUsers(query: string): Promise<SocialUser[]> {
-  const currentUser = await getUser();
-  const trimmed = query.trim().toLowerCase();
-  if (!trimmed) return [];
+  const currentUser = await getLocalUser();
+  // Strip characters that have meaning in PostgREST filters
+  const trimmed = query.trim().toLowerCase().replace(/[%,()*\\]/g, '');
+  if (trimmed.length < 2) return [];
 
-  if (isSupabaseConfigured) {
-    try {
-      const { data, error } = await supabase
+  if (!useMocks) {
+    let res: { data: any[] | null; error: any } = await supabase
+      .from('profiles')
+      .select('id, username, display_name, level, xp')
+      .or(`username.ilike.%${trimmed}%,display_name.ilike.%${trimmed}%`)
+      .neq('id', currentUser?.id || '')
+      .limit(10);
+    if (res.error && (res.error.code === '42703' || res.error.code === 'PGRST204')) {
+      res = await supabase
         .from('profiles')
         .select('id, username, level, xp')
         .ilike('username', `%${trimmed}%`)
         .neq('id', currentUser?.id || '')
         .limit(10);
-
-      if (!error && data) {
-        return data.map((u: any) => ({
-          id: u.id,
-          name: u.username || 'Anonymous Lifter',
-          xp: u.xp || 0,
-          level: u.level || 1,
-          avatar: (u.username || 'A').charAt(0).toUpperCase(),
-        }));
-      }
-    } catch (e) {
-      console.error('Failed to search Supabase users:', e);
     }
+    if (res.error) throw new Error(res.error.message);
+    return (res.data || []).map(u => toSocialUser(u));
   }
 
-  // --- MOCK FALLBACK ---
-  await ensureMockPool();
-  const poolStr = await AsyncStorage.getItem(KEYS.ALL_USERS);
-  const pool: SocialUser[] = poolStr ? JSON.parse(poolStr) : INITIAL_MOCK_USERS;
-
-  return pool.filter(
-    u => 
-      u.name.toLowerCase().includes(trimmed) && 
-      u.id !== currentUser?.id
-  );
+  const pool = await getMockPool();
+  return pool.filter(u => u.name.toLowerCase().includes(trimmed) && u.id !== currentUser?.id);
 }
 
 /**
  * Send a friend request
  */
 export async function addFriend(friendId: string): Promise<boolean> {
-  const currentUser = await getUser();
-  if (!currentUser) return false;
+  const currentUser = await getLocalUser();
+  if (!currentUser || friendId === currentUser.id) return false;
 
-  if (isSupabaseConfigured) {
-    try {
-      const { error } = await supabase
-        .from('friends')
-        .insert([
-          { user_id_1: currentUser.id, user_id_2: friendId, status: 'pending' }
-        ]);
-      if (!error) return true;
-    } catch (e) {
-      console.error('Failed to send Supabase request:', e);
+  if (!useMocks) {
+    const { error } = await supabase
+      .from('friends')
+      .insert({ user_id_1: currentUser.id, user_id_2: friendId, status: 'pending' });
+    if (error) {
+      if (error.code === '23505') throw new Error('You already have a request or friendship with this user.');
+      throw new Error(error.message);
     }
+    return true;
   }
 
-  // --- MOCK FALLBACK ---
-  await ensureMockPool();
-  const poolStr = await AsyncStorage.getItem(KEYS.ALL_USERS);
-  const pool: SocialUser[] = poolStr ? JSON.parse(poolStr) : INITIAL_MOCK_USERS;
-  
-  const targetFriend = pool.find(u => u.id === friendId);
-  if (!targetFriend) return false;
-
-  const currentFriends = await fetchFriends();
-  if (currentFriends.some(f => f.id === friendId)) return true; // Already friends
-
-  currentFriends.push(targetFriend);
-  await AsyncStorage.setItem(KEYS.FRIENDS, JSON.stringify(currentFriends));
+  const pool = await getMockPool();
+  const target = pool.find(u => u.id === friendId);
+  if (!target) return false;
+  const friends = await readJSON<SocialUser[]>(KEYS.FRIENDS, []);
+  if (!friends.some(f => f.id === friendId)) {
+    friends.push(target);
+    await AsyncStorage.setItem(KEYS.FRIENDS, JSON.stringify(friends));
+  }
   return true;
 }
 
@@ -371,24 +300,78 @@ export async function addFriend(friendId: string): Promise<boolean> {
  * Remove a friend relationship
  */
 export async function removeFriend(friendId: string): Promise<boolean> {
-  const currentUser = await getUser();
+  const currentUser = await getLocalUser();
   if (!currentUser) return false;
 
-  if (isSupabaseConfigured) {
-    try {
-      const { error } = await supabase
-        .from('friends')
-        .delete()
-        .or(`and(user_id_1.eq.${currentUser.id},user_id_2.eq.${friendId}),and(user_id_1.eq.${friendId},user_id_2.eq.${currentUser.id})`);
-      if (!error) return true;
-    } catch (e) {
-      console.error('Failed to delete Supabase friend:', e);
-    }
+  if (!useMocks) {
+    const { error } = await supabase
+      .from('friends')
+      .delete()
+      .or(`and(user_id_1.eq.${currentUser.id},user_id_2.eq.${friendId}),and(user_id_1.eq.${friendId},user_id_2.eq.${currentUser.id})`);
+    if (error) throw new Error(error.message);
+    return true;
   }
 
-  // --- MOCK FALLBACK ---
-  const currentFriends = await fetchFriends();
-  const filtered = currentFriends.filter(f => f.id !== friendId);
-  await AsyncStorage.setItem(KEYS.FRIENDS, JSON.stringify(filtered));
+  const friends = await readJSON<SocialUser[]>(KEYS.FRIENDS, []);
+  await AsyncStorage.setItem(KEYS.FRIENDS, JSON.stringify(friends.filter(f => f.id !== friendId)));
   return true;
+}
+
+// ───────────────────────────────────────────────────────
+// Shared routines (public table: shared_routines)
+// ───────────────────────────────────────────────────────
+
+function toRoutine(r: any): SharedRoutine {
+  return {
+    id: r.id,
+    creator_id: r.creator_id,
+    name: r.name,
+    description: r.description || '',
+    exercises: Array.isArray(r.exercises) ? r.exercises : [],
+    downloads: r.downloads || 0,
+    created_at: r.created_at,
+  };
+}
+
+/** Routines shared by the given users (e.g. your friends), newest first */
+export async function fetchSharedRoutines(creatorIds: string[]): Promise<SharedRoutine[]> {
+  if (useMocks || creatorIds.length === 0) return [];
+  const { data, error } = await supabase
+    .from('shared_routines')
+    .select('*')
+    .in('creator_id', creatorIds)
+    .order('created_at', { ascending: false })
+    .limit(50);
+  if (error) throw new Error(error.message);
+  return (data || []).map(toRoutine);
+}
+
+export async function shareRoutine(routine: {
+  name: string;
+  description?: string;
+  exercises: { name: string; sets: number; reps: number }[];
+}): Promise<SharedRoutine> {
+  const currentUser = await getLocalUser();
+  if (useMocks || !currentUser) throw new Error('Sign in with a cloud account to share routines.');
+
+  const { data, error } = await supabase
+    .from('shared_routines')
+    .insert({
+      id: generateId(),
+      creator_id: currentUser.id,
+      name: routine.name,
+      description: routine.description || '',
+      exercises: routine.exercises,
+    })
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return toRoutine(data);
+}
+
+/** Bump the download counter when someone copies a routine (best effort) */
+export async function recordRoutineDownload(routineId: string): Promise<void> {
+  if (useMocks) return;
+  const { error } = await supabase.rpc('increment_routine_downloads', { p_routine: routineId });
+  if (error) console.warn('increment_routine_downloads failed:', error.message);
 }

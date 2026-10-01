@@ -1,91 +1,18 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Platform, KeyboardAvoidingView, Alert, ActivityIndicator } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, useThemeColor, Spacing, BorderRadius, FontSize, FontWeight } from '../../lib/theme';
+import { Colors, useThemeColor, Spacing, BorderRadius, FontSize, FontWeight, Fonts } from '../../lib/theme';
 import { useAuthStore } from '../../stores/authStore';
 import { Sparkles, Send, Brain, Bot } from 'lucide-react-native';
 import MarkdownText from '../../components/MarkdownText';
-import { getAICoachingAdvice } from '../../lib/gemini';
-import { fetchGlobalLeaderboard, fetchFriends, searchUsers, addFriend, removeFriend, fetchIncomingRequests, acceptFriend, declineFriend } from '../../lib/social';
-import { saveTemplate } from '../../lib/storage';
-import { sendMessage as sendChatMessage, getMessages as getChatMessages } from '../../lib/messaging';
+import { getAICoachingAdvice, CoachTurn } from '../../lib/gemini';
+import { fetchGlobalLeaderboard, fetchFriends, searchUsers, addFriend, removeFriend, fetchIncomingRequests, acceptFriend, declineFriend, fetchSharedRoutines, recordRoutineDownload, SharedRoutine } from '../../lib/social';
+import { saveTemplate, getWorkouts, getPRs } from '../../lib/storage';
+import { displayVolume } from '../../lib/units';
+import { sendMessage as sendChatMessage, getMessages as getChatMessages, subscribeToMessages, markConversationRead } from '../../lib/messaging';
 import { getFeed, addReaction, removeReaction, WorkoutPost } from '../../lib/feed';
 import * as Haptics from 'expo-haptics';
-
-const MOCK_FRIEND_ROUTINES: Record<string, { name: string; muscle_groups: string[]; exercises: { name: string; sets: number; reps: number }[]; prs: { name: string; value: string }[] }> = {
-  'mock-1': {
-    name: "Alex's Golden Era Chest & Back",
-    muscle_groups: ['Chest', 'Back'],
-    exercises: [
-      { name: 'Barbell Bench Press', sets: 4, reps: 8 },
-      { name: 'Incline Dumbbell Press', sets: 3, reps: 10 },
-      { name: 'Bent-Over Barbell Rows', sets: 4, reps: 8 },
-      { name: 'Pull-Ups', sets: 3, reps: 12 }
-    ],
-    prs: [
-      { name: 'Bench Press', value: '110 kg' },
-      { name: 'Deadlift', value: '180 kg' }
-    ]
-  },
-  'mock-2': {
-    name: "Sam's Powerlifting Squat Special",
-    muscle_groups: ['Legs'],
-    exercises: [
-      { name: 'Barbell Back Squat', sets: 5, reps: 5 },
-      { name: 'Leg Press', sets: 3, reps: 10 },
-      { name: 'Romanian Deadlift', sets: 4, reps: 8 }
-    ],
-    prs: [
-      { name: 'Back Squat', value: '160 kg' },
-      { name: 'Deadlift', value: '200 kg' }
-    ]
-  },
-  'mock-3': {
-    name: "Jordan's High Intensity Shoulder Shred",
-    muscle_groups: ['Shoulders'],
-    exercises: [
-      { name: 'Overhead Press', sets: 4, reps: 6 },
-      { name: 'Dumbbell Lateral Raises', sets: 4, reps: 12 },
-      { name: 'Face Pulls', sets: 3, reps: 15 }
-    ],
-    prs: [
-      { name: 'Overhead Press', value: '75 kg' }
-    ]
-  },
-  'mock-4': {
-    name: "Sarah's Posterior Chain Powerhouse",
-    muscle_groups: ['Glutes', 'Hamstrings'],
-    exercises: [
-      { name: 'Barbell Deadlift', sets: 4, reps: 5 },
-      { name: 'Glute Ham Raises', sets: 3, reps: 10 },
-      { name: 'Barbell Hip Thrusts', sets: 4, reps: 8 }
-    ],
-    prs: [
-      { name: 'Deadlift', value: '140 kg' },
-      { name: 'Squat', value: '115 kg' }
-    ]
-  }
-};
-
-const getFriendRoutine = (id: string, name: string) => {
-  if (MOCK_FRIEND_ROUTINES[id]) {
-    return MOCK_FRIEND_ROUTINES[id];
-  }
-  return {
-    name: `${name}'s Strength Routine`,
-    muscle_groups: ['Full Body'],
-    exercises: [
-      { name: 'Squat', sets: 3, reps: 8 },
-      { name: 'Bench Press', sets: 3, reps: 8 },
-      { name: 'Pull-Ups', sets: 3, reps: 10 }
-    ],
-    prs: [
-      { name: 'Bench Press', value: '85 kg' },
-      { name: 'Squat', value: '120 kg' }
-    ]
-  };
-};
 
 export default function CommunityScreen() {
   const { colors, text, accent, status, muscle } = useThemeColor();
@@ -114,39 +41,6 @@ export default function CommunityScreen() {
 
 
   useEffect(() => {
-    const loadChats = async () => {
-      try {
-        const stored = await AsyncStorage.getItem('nextrep_chats');
-        if (stored) {
-          setChatMessages(JSON.parse(stored));
-        } else {
-          const initial = {
-            'mock-1': [
-              { id: '1', text: "Hey bro! Are we hitting the gym together today?", sender: 'them' as const, timestamp: new Date(Date.now() - 3600000 * 2).toISOString() },
-              { id: '2', text: "Yeah! Let's do chest and back.", sender: 'me' as const, timestamp: new Date(Date.now() - 3600000).toISOString() },
-              { id: '3', text: "Awesome, see you at 6 PM. I'm going to try to Bench 110kg today!", sender: 'them' as const, timestamp: new Date(Date.now() - 1800000).toISOString() }
-            ],
-            'mock-2': [
-              { id: '1', text: "Did you check out my squat progression chart in the analytics tab?", sender: 'them' as const, timestamp: new Date(Date.now() - 7200000).toISOString() },
-              { id: '2', text: "Yes! 160kg is insane progress, Sam!", sender: 'me' as const, timestamp: new Date(Date.now() - 3600000).toISOString() },
-              { id: '3', text: "Thanks man! Consistency pays off 👊", sender: 'them' as const, timestamp: new Date(Date.now() - 1800000).toISOString() }
-            ],
-            'mock-3': [
-              { id: '1', text: "Hey! What's the best exercise to hit the rear delts?", sender: 'them' as const, timestamp: new Date(Date.now() - 10000000).toISOString() },
-              { id: '2', text: "Face pulls or reverse dumbbell flyes work great.", sender: 'me' as const, timestamp: new Date(Date.now() - 8000000).toISOString() }
-            ],
-            'mock-4': [
-              { id: '1', text: "Smashing deadlifts tomorrow. You in?", sender: 'them' as const, timestamp: new Date(Date.now() - 3600000 * 4).toISOString() }
-            ]
-          };
-          setChatMessages(initial);
-          await AsyncStorage.setItem('nextrep_chats', JSON.stringify(initial));
-        }
-      } catch (e) {
-        console.error(e);
-      }
-    };
-    loadChats();
     // Load feed
     const loadFeedData = async () => {
       setLoadingFeed(true);
@@ -169,23 +63,50 @@ export default function CommunityScreen() {
     "Calculate my daily protein target"
   ];
 
+  // Short summary of recent training so RepBot can give specific advice
+  const buildTrainingContext = async (): Promise<string> => {
+    try {
+      const [workouts, prs] = await Promise.all([getWorkouts(), getPRs()]);
+      const recent = workouts.slice(0, 5).map(w => {
+        const names = [...new Set(w.exercises.map(e => e.exercise_name))].slice(0, 5).join(', ');
+        return `- ${w.workout_date}: ${w.name} (${w.duration_minutes} min, ${Math.round(w.total_volume_kg)} kg volume) — ${names}`;
+      });
+      const best = prs.filter(p => p.record_type === '1rm').slice(0, 5)
+        .map(p => `- ${p.exercise_name}: est. 1RM ${p.value} kg`);
+      return [
+        user?.goal ? `Goal: ${user.goal.replace('_', ' ')}` : '',
+        user?.weight_kg ? `Bodyweight: ${user.weight_kg} kg` : '',
+        `Total workouts logged: ${workouts.length}`,
+        recent.length ? `Recent sessions:\n${recent.join('\n')}` : '',
+        best.length ? `Recent 1RM records:\n${best.join('\n')}` : '',
+      ].filter(Boolean).join('\n');
+    } catch {
+      return '';
+    }
+  };
+
   const handleSendMessage = async (textToSend: string) => {
-    if (!textToSend.trim()) return;
+    if (!textToSend.trim() || isAIResponding) return;
 
     const userMsg = {
       id: Date.now().toString(),
-      text: textToSend,
+      text: textToSend.trim(),
       sender: 'user' as const,
       timestamp: new Date()
     };
 
-    setMessages(prev => [...prev, userMsg]);
+    const conversation = [...messages, userMsg];
+    setMessages(conversation);
     setInputMessage('');
     setIsAIResponding(true);
 
     try {
-      const response = await getAICoachingAdvice(textToSend);
-      
+      // Send the real conversation (minus the canned welcome) so follow-ups work
+      const history: CoachTurn[] = conversation
+        .filter(m => m.id !== 'welcome' && !m.id.startsWith('err-'))
+        .map(m => ({ role: m.sender === 'user' ? 'user' : 'model', text: m.text }));
+      const response = await getAICoachingAdvice(history, await buildTrainingContext());
+
       setMessages(prev => [...prev, {
         id: (Date.now() + 1).toString(),
         text: response,
@@ -194,10 +115,9 @@ export default function CommunityScreen() {
       }]);
     } catch (err: any) {
       console.error(err);
-      const errorMessage = err?.message || String(err);
       setMessages(prev => [...prev, {
-        id: (Date.now() + 1).toString(),
-        text: `Unable to reach the AI Coach.\n\nError details:\n"${errorMessage}"\n\n💡 Troubleshooting tip: If the API key is not active, try restarting your Expo dev server with clear cache:\n\n   npx expo start -c`,
+        id: `err-${Date.now()}`,
+        text: "I couldn't reach the coaching service right now. Check your connection and try again.",
         sender: 'ai' as const,
         timestamp: new Date()
       }]);
@@ -211,14 +131,13 @@ export default function CommunityScreen() {
   const [friends, setFriends] = useState<any[]>([]);
   const [incomingRequests, setIncomingRequests] = useState<any[]>([]);
   const [expandedFriendId, setExpandedFriendId] = useState<string | null>(null);
-  const [fistBumps, setFistBumps] = useState<Record<string, number>>({});
+  const [friendRoutines, setFriendRoutines] = useState<Record<string, SharedRoutine[]>>({});
   const [isCopyingRoutine, setIsCopyingRoutine] = useState<string | null>(null);
 
   // Direct Chat States
   const [activeChatFriend, setActiveChatFriend] = useState<any | null>(null);
   const [chatMessages, setChatMessages] = useState<Record<string, { id: string; text: string; sender: 'me' | 'them'; timestamp: string }[]>>({});
   const [directChatInput, setDirectChatInput] = useState('');
-  const [isFriendTyping, setIsFriendTyping] = useState(false);
 
   const [isLoadingSocial, setIsLoadingSocial] = useState(false);
   const [socialError, setSocialError] = useState(false);
@@ -238,6 +157,11 @@ export default function CommunityScreen() {
       setLeaderboard(lb);
       setFriends(fr);
       setIncomingRequests(reqs);
+
+      const routines = await fetchSharedRoutines(fr.map(f => f.id)).catch(() => []);
+      const byCreator: Record<string, SharedRoutine[]> = {};
+      routines.forEach(r => { (byCreator[r.creator_id] ||= []).push(r); });
+      setFriendRoutines(byCreator);
     } catch (e) {
       console.error('Failed to load social data:', e);
       setSocialError(true);
@@ -251,6 +175,38 @@ export default function CommunityScreen() {
       loadSocialData();
     }
   }, [activeTab]);
+
+  // Load the conversation from the server and listen for new messages
+  useEffect(() => {
+    if (!activeChatFriend || !user?.id) return;
+    const friendId = activeChatFriend.id;
+    let cancelled = false;
+
+    getChatMessages(friendId).then(msgs => {
+      if (!cancelled) setChatMessages(prev => ({ ...prev, [friendId]: msgs }));
+    });
+    markConversationRead(friendId);
+
+    const unsubscribe = subscribeToMessages(friendId, user.id, msg => {
+      setChatMessages(prev => {
+        const existing = prev[friendId] || [];
+        if (existing.some(m => m.id === msg.id)) return prev;
+        return { ...prev, [friendId]: [...existing, msg] };
+      });
+      markConversationRead(friendId);
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [activeChatFriend?.id, user?.id]);
+
+  const showError = (title: string, e: unknown) => {
+    const message = e instanceof Error ? e.message : 'Something went wrong. Please try again.';
+    if (Platform.OS === 'web') alert(`${title}: ${message}`);
+    else Alert.alert(title, message);
+  };
 
   const handleSearch = async (val: string) => {
     setSearchQuery(val);
@@ -273,13 +229,14 @@ export default function CommunityScreen() {
         await loadSocialData();
         setSearchResults(prev => prev.filter(u => u.id !== friendId));
         if (Platform.OS === 'web') {
-          alert("Friend added successfully!");
+          alert("Friend request sent!");
         } else {
-          Alert.alert("Success", "Friend added successfully!");
+          Alert.alert("Request Sent", "They'll appear in your friends list once they accept.");
         }
       }
     } catch (e) {
       console.error(e);
+      showError('Could not send request', e);
     }
   };
 
@@ -296,6 +253,7 @@ export default function CommunityScreen() {
       }
     } catch (e) {
       console.error(e);
+      showError('Could not remove friend', e);
     }
   };
 
@@ -312,6 +270,7 @@ export default function CommunityScreen() {
       }
     } catch (e) {
       console.error(e);
+      showError('Could not accept request', e);
     }
   };
 
@@ -328,35 +287,44 @@ export default function CommunityScreen() {
       }
     } catch (e) {
       console.error(e);
+      showError('Could not decline request', e);
     }
   };
 
   const handleFistBump = async (friendId: string, name: string) => {
     try {
+      await sendChatMessage(friendId, '👊 Fist bump!');
       if (Platform.OS !== 'web') {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
+      if (Platform.OS === 'web') alert(`Fist bump sent to ${name}!`);
+      else Alert.alert('👊 Sent', `Fist bump sent to ${name}!`);
     } catch (e) {
-      console.warn(e);
+      showError('Fist bump failed', e);
     }
-    setFistBumps(prev => ({
-      ...prev,
-      [friendId]: (prev[friendId] || 0) + 1
-    }));
   };
 
-  const handleCopyRoutine = async (friendId: string, name: string) => {
-    setIsCopyingRoutine(friendId);
+  const handleCopyRoutine = async (routine: SharedRoutine) => {
+    setIsCopyingRoutine(routine.id);
     try {
-      const routine = getFriendRoutine(friendId, name);
+      const muscleGroups = [...new Set(
+        routine.exercises.flatMap(ex => {
+          const lib = require('../../data/exercises.json').exercises.find(
+            (e: any) => e.name.toLowerCase() === ex.name.toLowerCase()
+          );
+          return lib ? lib.primary_muscles : [];
+        })
+      )] as string[];
+
       await saveTemplate({
-        user_id: user?.id || 'user',
+        user_id: user?.id,
         name: routine.name,
-        muscle_groups: routine.muscle_groups,
+        muscle_groups: muscleGroups,
         exercises: routine.exercises,
         is_default: false
       });
-      
+      recordRoutineDownload(routine.id);
+
       try {
         if (Platform.OS !== 'web') {
           await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -364,13 +332,12 @@ export default function CommunityScreen() {
       } catch (h) {}
 
       if (Platform.OS === 'web') {
-        alert(`Copied "${routine.name}" directly to your templates!`);
+        alert(`Copied "${routine.name}" to your templates!`);
       } else {
-        Alert.alert("Success", `Copied "${routine.name}" directly to your templates! You can start this workout in your Workout tab.`);
+        Alert.alert("Copied", `"${routine.name}" is now in your templates. Start it from the Workout tab.`);
       }
     } catch (e) {
-      console.error(e);
-      Alert.alert("Error", "Failed to copy template.");
+      showError('Failed to copy routine', e);
     } finally {
       setIsCopyingRoutine(null);
     }
@@ -401,6 +368,7 @@ export default function CommunityScreen() {
       }
     } catch (e) {
       console.error('Send message failed:', e);
+      showError('Message not sent', e);
     }
   };
 
@@ -515,7 +483,7 @@ export default function CommunityScreen() {
                         </View>
                         <View style={{ backgroundColor: colors.surfaceHighlight, borderRadius: BorderRadius.md, paddingHorizontal: 10, paddingVertical: 5 }}>
                           <Text style={{ color: text.tertiary, fontSize: 9, fontWeight: 'bold', textTransform: 'uppercase' }}>Volume</Text>
-                          <Text style={{ color: text.primary, fontWeight: 'bold', fontSize: 13 }}>{post.total_volume_kg >= 1000 ? `${(post.total_volume_kg / 1000).toFixed(1)}k` : post.total_volume_kg} kg</Text>
+                          <Text style={{ color: text.primary, fontWeight: 'bold', fontSize: 13 }}>{displayVolume(post.total_volume_kg)}</Text>
                         </View>
                         <View style={{ backgroundColor: colors.surfaceHighlight, borderRadius: BorderRadius.md, paddingHorizontal: 10, paddingVertical: 5 }}>
                           <Text style={{ color: text.tertiary, fontSize: 9, fontWeight: 'bold', textTransform: 'uppercase' }}>Exercises</Text>
@@ -767,8 +735,7 @@ export default function CommunityScreen() {
                   ) : (
                     friends.map((friend) => {
                       const isExpanded = expandedFriendId === friend.id;
-                      const routine = getFriendRoutine(friend.id, friend.name);
-                      const bumpCount = fistBumps[friend.id] || 0;
+                      const routines = friendRoutines[friend.id] || [];
 
                       return (
                         <View 
@@ -803,11 +770,6 @@ export default function CommunityScreen() {
                               </View>
                             </View>
                             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                              {bumpCount > 0 && (
-                                <View style={{ backgroundColor: 'rgba(234, 179, 8, 0.15)', borderRadius: 12, paddingHorizontal: 8, paddingVertical: 4 }}>
-                                  <Text style={{ color: '#EAB308', fontSize: 11, fontWeight: 'bold' }}>👊 {bumpCount}</Text>
-                                </View>
-                              )}
                               <Ionicons 
                                 name={isExpanded ? "chevron-up" : "chevron-down"} 
                                 size={18} 
@@ -824,63 +786,54 @@ export default function CommunityScreen() {
                               borderColor: colors.border,
                               backgroundColor: colors.surfaceHighlight 
                             }}>
-                              {/* PRs Section */}
-                              {routine.prs.length > 0 && (
-                                <View style={{ marginBottom: 14 }}>
-                                  <Text style={{ color: text.secondary, fontSize: 11, fontWeight: 'bold', textTransform: 'uppercase', marginBottom: 6 }}>Top Lifts 🏆</Text>
-                                  <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-                                    {routine.prs.map((pr, i) => (
-                                      <View key={i} style={{ backgroundColor: colors.surfaceElevated, borderWidth: 1, borderColor: colors.border, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 }}>
-                                        <Text style={{ color: text.tertiary, fontSize: 10 }}>{pr.name}</Text>
-                                        <Text style={{ color: accent.red, fontSize: 13, fontWeight: 'bold' }}>{pr.value}</Text>
-                                      </View>
-                                    ))}
+                              {/* Shared Routines */}
+                              {routines.length === 0 ? (
+                                <Text style={{ color: text.tertiary, fontSize: 12, fontStyle: 'italic', marginBottom: 14 }}>
+                                  {friend.name} hasn't shared any routines yet.
+                                </Text>
+                              ) : routines.map(routine => (
+                                <View key={routine.id} style={{
+                                  backgroundColor: colors.surfaceElevated,
+                                  borderRadius: BorderRadius.md,
+                                  padding: 12,
+                                  borderWidth: 1,
+                                  borderColor: colors.border,
+                                  marginBottom: 14
+                                }}>
+                                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                                    <Text style={{ color: text.primary, fontSize: 13, fontWeight: 'bold', flex: 1 }}>{routine.name}</Text>
+                                    <Text style={{ color: text.tertiary, fontSize: 10 }}>📥 {routine.downloads}</Text>
                                   </View>
-                                </View>
-                              )}
-
-                              {/* Routine Section */}
-                              <View style={{ 
-                                backgroundColor: colors.surfaceElevated, 
-                                borderRadius: BorderRadius.md, 
-                                padding: 12, 
-                                borderWidth: 1, 
-                                borderColor: colors.border,
-                                marginBottom: 14 
-                              }}>
-                                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                                  <Text style={{ color: text.primary, fontSize: 13, fontWeight: 'bold' }}>Signature Routine</Text>
-                                  <View style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 }}>
-                                    <Text style={{ color: accent.red, fontSize: 9, fontWeight: 'bold' }}>{routine.muscle_groups.join(', ')}</Text>
-                                  </View>
-                                </View>
-                                <Text style={{ color: text.secondary, fontSize: 12, fontWeight: 'bold', marginBottom: 8 }}>{routine.name}</Text>
-                                
-                                {routine.exercises.map((ex, idx) => (
-                                  <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4, borderBottomWidth: idx === routine.exercises.length - 1 ? 0 : 1, borderColor: colors.border }}>
-                                    <Text style={{ color: text.secondary, fontSize: 12 }}>{ex.name}</Text>
-                                    <Text style={{ color: text.tertiary, fontSize: 12, fontWeight: 'bold' }}>{ex.sets}x{ex.reps}</Text>
-                                  </View>
-                                ))}
-
-                                <TouchableOpacity 
-                                  style={{
-                                    backgroundColor: '#C08D38',
-                                    borderRadius: 6,
-                                    paddingVertical: 10,
-                                    alignItems: 'center',
-                                    marginTop: 12,
-                                  }}
-                                  onPress={() => handleCopyRoutine(friend.id, friend.name)}
-                                  disabled={isCopyingRoutine === friend.id}
-                                >
-                                  {isCopyingRoutine === friend.id ? (
-                                    <ActivityIndicator size="small" color="#fff" />
-                                  ) : (
-                                    <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold' }}>📋 Copy Routine to My Templates</Text>
+                                  {!!routine.description && (
+                                    <Text style={{ color: text.secondary, fontSize: 12, marginBottom: 8 }}>{routine.description}</Text>
                                   )}
-                                </TouchableOpacity>
-                              </View>
+
+                                  {routine.exercises.map((ex, idx) => (
+                                    <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4, borderBottomWidth: idx === routine.exercises.length - 1 ? 0 : 1, borderColor: colors.border }}>
+                                      <Text style={{ color: text.secondary, fontSize: 12 }}>{ex.name}</Text>
+                                      <Text style={{ color: text.tertiary, fontSize: 12, fontWeight: 'bold' }}>{ex.sets}x{ex.reps}</Text>
+                                    </View>
+                                  ))}
+
+                                  <TouchableOpacity
+                                    style={{
+                                      backgroundColor: '#C08D38',
+                                      borderRadius: 6,
+                                      paddingVertical: 10,
+                                      alignItems: 'center',
+                                      marginTop: 12,
+                                    }}
+                                    onPress={() => handleCopyRoutine(routine)}
+                                    disabled={isCopyingRoutine === routine.id}
+                                  >
+                                    {isCopyingRoutine === routine.id ? (
+                                      <ActivityIndicator size="small" color="#fff" />
+                                    ) : (
+                                      <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold' }}>📋 Copy to My Templates</Text>
+                                    )}
+                                  </TouchableOpacity>
+                                </View>
+                              ))}
 
                               {/* Interactive Actions Footer */}
                               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
@@ -1183,25 +1136,6 @@ export default function CommunityScreen() {
               })
             )}
 
-            {isFriendTyping && (
-              <View 
-                style={{
-                  alignSelf: 'flex-start',
-                  backgroundColor: colors.surfaceElevated,
-                  borderWidth: 1,
-                  borderColor: colors.border,
-                  borderRadius: 16,
-                  borderBottomLeftRadius: 2,
-                  paddingHorizontal: 14,
-                  paddingVertical: 10,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 4
-                }}
-              >
-                <Text style={{ color: text.tertiary, fontSize: 12, fontStyle: 'italic' }}>{activeChatFriend.name} is typing...</Text>
-              </View>
-            )}
           </ScrollView>
 
           {/* Input Bar */}
@@ -1285,14 +1219,14 @@ function getTimeAgo(date: Date): string {
 const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any) => StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   header: { paddingTop: 60, paddingHorizontal: Spacing.lg, paddingBottom: Spacing.md },
-  title: { color: text.primary, fontSize: FontSize['3xl'], fontWeight: FontWeight.extrabold },
+  title: { color: text.primary, fontFamily: Fonts.displayHeavy, fontSize: 40, lineHeight: 44, textTransform: 'uppercase', letterSpacing: 0.2 },
   tabSelector: { flexDirection: 'row', paddingHorizontal: Spacing.lg, marginBottom: Spacing.md },
   tab: { flex: 1, paddingVertical: Spacing.sm, alignItems: 'center', borderBottomWidth: 2, borderBottomColor: 'transparent' },
   activeTab: { borderBottomColor: accent.red },
   tabText: { color: text.tertiary, fontWeight: 'bold' },
   activeTabText: { color: text.primary },
   content: { padding: Spacing.lg },
-  sectionTitle: { color: text.secondary, textTransform: 'uppercase', fontSize: 12, fontWeight: 'bold', marginBottom: Spacing.md },
+  sectionTitle: { color: text.secondary, marginBottom: Spacing.md, fontFamily: Fonts.display, fontSize: 18, textTransform: 'uppercase', letterSpacing: 0.8 },
   userCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, padding: Spacing.md, borderRadius: BorderRadius.lg, marginBottom: Spacing.sm },
   myCard: { borderColor: accent.red, borderWidth: 1 },
   rank: { color: text.tertiary, fontSize: 18, fontWeight: 'bold', width: 40 },

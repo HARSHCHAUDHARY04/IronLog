@@ -1,49 +1,51 @@
 // ═══════════════════════════════════════════════════════
-// IronLog Design System
-// Dark-first, gym-optimized color palette
+// Next Rep Design System
+// Dark-first graphite palette with an ember accent and a
+// condensed display face for headings and numbers.
 // ═══════════════════════════════════════════════════════
 
 export const Colors = {
   // Core palette
   dark: {
-    background: '#060816', // Deepest background
-    surface: '#0E1424',    // Base surface
-    surfaceElevated: '#131C31', // Card surface
-    surfaceHighlight: '#1A243A',
-    border: 'rgba(255,255,255,0.05)', // Extremely soft borders
-    borderLight: 'rgba(255,255,255,0.1)',
+    background: '#0A0A0C',       // Graphite, not navy
+    surface: '#111114',          // Base surface (tab bar, sheets)
+    surfaceElevated: '#17171C',  // Cards
+    surfaceHighlight: '#202027', // Inputs, chips, pressed states
+    border: 'rgba(255,255,255,0.07)',
+    borderLight: 'rgba(255,255,255,0.12)',
   },
   light: {
-    background: '#F9FAFB',
+    background: '#F5F5F7',
     surface: '#FFFFFF',
-    surfaceElevated: '#F3F4F6',
-    surfaceHighlight: '#E5E7EB',
-    border: '#D1D5DB',
-    borderLight: '#9CA3AF',
+    surfaceElevated: '#FFFFFF',
+    surfaceHighlight: '#EEEEF2',
+    border: 'rgba(10,10,12,0.08)',
+    borderLight: 'rgba(10,10,12,0.16)',
   },
 
   // Text
   text: {
     dark: {
-      primary: '#F0F4FF', // Crisp white with a hint of blue
-      secondary: 'rgba(255, 255, 255, 0.6)', // Softer secondary
-      tertiary: 'rgba(255, 255, 255, 0.4)',
-      inverse: '#060816',
+      primary: '#F4F4F6',
+      secondary: 'rgba(244, 244, 246, 0.66)',
+      tertiary: 'rgba(244, 244, 246, 0.42)',
+      inverse: '#0A0A0C',
     },
     light: {
-      primary: '#111827',
-      secondary: '#4B5563',
-      tertiary: '#6B7280',
-      inverse: '#F9FAFB',
+      primary: '#0F0F12',
+      secondary: '#52525B',
+      tertiary: '#8A8A93',
+      inverse: '#F5F5F7',
     }
   },
 
   // Accent colors
+  // Brand "red" is a warm ember; key names kept for compatibility
   accent: {
-    red: '#FF4444',
-    redDark: '#CC2222',
-    redLight: '#FF6666',
-    redGlow: 'rgba(255, 68, 68, 0.15)',
+    red: '#FF4D3D',
+    redDark: '#E0301F',
+    redLight: '#FF7A5C',
+    redGlow: 'rgba(255, 77, 61, 0.14)',
   },
 
   // Status colors
@@ -80,12 +82,23 @@ export const Colors = {
 
   // Gradients (start, end)
   gradients: {
-    primary: ['#FF4444', '#CC2222'],
+    primary: ['#FF7A3D', '#FF3B30'],
+    ember: ['#FF7A3D', '#FF3B30'],
+    heroDark: ['#2A1411', '#17171C'],
+    heroLight: ['#FFE9E3', '#FFFFFF'],
     surface: ['#111827', '#0A0E1A'],
     accent: ['#FF6666', '#FF4444'],
     success: ['#4ADE80', '#22C55E'],
     premium: ['#F59E0B', '#D97706'],
   },
+} as const;
+
+// Condensed display face for headings, big numbers and labels.
+// Loaded in app/_layout.tsx; falls back to the system font until ready.
+export const Fonts = {
+  display: 'BarlowCondensed_700Bold',
+  displayHeavy: 'BarlowCondensed_800ExtraBold',
+  displayMedium: 'BarlowCondensed_600SemiBold',
 } as const;
 
 export const Spacing = {
@@ -102,11 +115,11 @@ export const Spacing = {
 } as const;
 
 export const BorderRadius = {
-  sm: 6,
-  md: 10,
-  lg: 14,
-  xl: 18,
-  '2xl': 24,
+  sm: 8,
+  md: 12,
+  lg: 16,
+  xl: 20,
+  '2xl': 26,
   full: 9999,
 } as const;
 
@@ -192,6 +205,18 @@ export const CommonStyles = {
     letterSpacing: 0.5,
   },
 };
+
+/** Accent colour for a muscle group name (e.g. 'quadriceps' → legs green) */
+export function getMuscleColor(group?: string): string {
+  const g = (group || '').toLowerCase();
+  if (g.includes('chest')) return Colors.muscle.chest;
+  if (g.includes('back') || g.includes('lat')) return Colors.muscle.back;
+  if (g.includes('shoulder')) return Colors.muscle.shoulders;
+  if (['biceps', 'triceps', 'arms', 'forearm'].some(m => g.includes(m))) return Colors.muscle.arms;
+  if (['quad', 'hamstring', 'glute', 'calf', 'calves', 'leg'].some(m => g.includes(m))) return Colors.muscle.legs;
+  if (g.includes('core') || g.includes('abs')) return Colors.muscle.core;
+  return Colors.accent.red;
+}
 
 export type ThemeColors = typeof Colors.dark | typeof Colors.light;
 export type TextColors = typeof Colors.text.dark | typeof Colors.text.light;

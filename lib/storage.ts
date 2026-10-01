@@ -1,15 +1,19 @@
 // ═══════════════════════════════════════════════════════
-// Mock Data Storage Layer
-// Provides full app functionality without Supabase
-// Uses AsyncStorage for persistence
+// Data Storage Layer
+// Local-first: AsyncStorage is the source of truth on device,
+// Supabase is synced when configured and a session exists.
+// Writes that fail to reach Supabase are queued and retried.
 // ═══════════════════════════════════════════════════════
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase, isSupabaseConfigured } from './supabase';
 import { useSettingsStore } from '../stores/settingsStore';
+import { toLocalDateStr, parseLocalDate, startOfWeek as getStartOfWeek, addDays } from './date';
+import { calculateStreaks } from './streaks';
+export { calculateStreaks } from './streaks';
 
 // Generate a standard RFC4122 version 4 compliant UUID
-function generateId(): string {
+export function generateId(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
     const r = (Math.random() * 16) | 0;
     const v = c === 'x' ? r : (r & 0x3) | 0x8;
@@ -17,13 +21,15 @@ function generateId(): string {
   });
 }
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function isUUID(id: string): boolean {
+  return UUID_REGEX.test(id);
+}
+
 // Helper to ensure an ID is a valid UUID, generating one if it isn't
 function ensureUUID(id: string): string {
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  if (uuidRegex.test(id)) {
-    return id;
-  }
-  return generateId();
+  return isUUID(id) ? id : generateId();
 }
 
 // ───────────────────────────────────────────────────────
@@ -127,127 +133,201 @@ const KEYS = {
   PROGRESS: 'ironlog_progress',
   PRS: 'ironlog_prs',
   CUSTOM_EXERCISES: 'ironlog_custom_exercises',
+  PENDING_WORKOUTS: 'ironlog_pending_workouts',
+  PENDING_DELETES: 'ironlog_pending_deletes',
 };
+
+// Other per-user keys owned by other modules, cleared on sign-out
+const OTHER_USER_KEYS = [
+  'ironlog_session_prs',
+  'ironlog_daily_macros',
+  'ironlog_daily_macros_date',
+  'ironlog_weekly_report',
+  'ironlog_weekly_report_date',
+  'ironlog_feed_posts',
+  'ironlog_feed_reactions',
+  'ironlog_social_friends',
+  'ironlog_social_pending',
+  'ironlog_social_users_pool',
+  'nextrep_chats',
+  'ironlog_reminder_ids',
+  'ironlog-active-workout',
+];
+
+// ───────────────────────────────────────────────────────
+// Internal helpers
+// ───────────────────────────────────────────────────────
+
+async function readLocal<T>(key: string, fallback: T): Promise<T> {
+  try {
+    const raw = await AsyncStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch (e) {
+    console.error(`Failed to read ${key}:`, e);
+    return fallback;
+  }
+}
+
+async function writeLocal(key: string, value: unknown): Promise<void> {
+  await AsyncStorage.setItem(key, JSON.stringify(value));
+}
+
+/** Supabase user id for the current session, or null when signed out / not configured */
+export async function getSessionUserId(): Promise<string | null> {
+  if (!isSupabaseConfigured) return null;
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.user?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function addToSet(key: string, id: string) {
+  const ids = await readLocal<string[]>(key, []);
+  if (!ids.includes(id)) {
+    ids.push(id);
+    await writeLocal(key, ids);
+  }
+}
+
+async function removeFromSet(key: string, id: string) {
+  const ids = await readLocal<string[]>(key, []);
+  await writeLocal(key, ids.filter(x => x !== id));
+}
 
 // ───────────────────────────────────────────────────────
 // User Operations
 // ───────────────────────────────────────────────────────
 
+export async function getLocalUser(): Promise<User | null> {
+  return readLocal<User | null>(KEYS.USER, null);
+}
+
 export async function getUser(): Promise<User | null> {
-  if (isSupabaseConfigured) {
+  const local = await getLocalUser();
+  const sessionUserId = await getSessionUserId();
+
+  if (sessionUserId) {
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user) {
-        const { data: profile, error: pError } = await supabase
-          .from('profiles')
-          .select('id, username, created_at, xp, level, current_streak, highest_streak, total_workouts, badges')
-          .eq('id', session.user.id)
-          .single();
-        
-        if (!pError && profile) {
-          // Fetch demographics from users table
-          const { data: userData } = await supabase
-            .from('users')
-            .select('age, weight_kg, height_cm, goal, onboarding_completed')
-            .eq('id', session.user.id)
-            .single();
+      const [{ data: profile, error: pError }, { data: userData }] = await Promise.all([
+        supabase.from('profiles').select('*').eq('id', sessionUserId).maybeSingle(),
+        supabase
+          .from('users')
+          .select('name, age, weight_kg, height_cm, goal, onboarding_completed')
+          .eq('id', sessionUserId)
+          .maybeSingle(),
+      ]);
 
-          const user: User = {
-            id: profile.id,
-            name: profile.username || '',
-            email: session.user.email || '',
-            age: userData?.age || undefined,
-            weight_kg: userData?.weight_kg ? Number(userData.weight_kg) : undefined,
-            height_cm: userData?.height_cm ? Number(userData.height_cm) : undefined,
-            goal: (userData?.goal as any) || 'general_fitness',
-            onboarding_completed: userData?.onboarding_completed ?? true,
-            xp: profile.xp || 0,
-            level: profile.level || 1,
-            current_streak: profile.current_streak || 0,
-            highest_streak: profile.highest_streak || 0,
-            total_workouts: profile.total_workouts || 0,
-            badges: profile.badges || [],
-            created_at: profile.created_at || new Date().toISOString(),
-          };
-          await AsyncStorage.setItem(KEYS.USER, JSON.stringify(user));
-          return user;
-        }
+      if (!pError && profile) {
+        const localForThisUser = local?.id === sessionUserId ? local : null;
+        const user: User = {
+          id: profile.id,
+          name: userData?.name || profile.display_name || profile.username || localForThisUser?.name || '',
+          email: session?.user?.email || localForThisUser?.email || '',
+          age: userData?.age ?? undefined,
+          weight_kg: userData?.weight_kg ? Number(userData.weight_kg) : undefined,
+          height_cm: userData?.height_cm ? Number(userData.height_cm) : undefined,
+          goal: (userData?.goal as User['goal']) || 'general_fitness',
+          // No users row yet means the account has never finished onboarding
+          onboarding_completed: userData?.onboarding_completed ?? false,
+          xp: profile.xp || 0,
+          level: profile.level || 1,
+          current_streak: profile.current_streak || 0,
+          highest_streak: profile.highest_streak || 0,
+          total_workouts: profile.total_workouts || 0,
+          badges: profile.badges || [],
+          created_at: profile.created_at || new Date().toISOString(),
+        };
+        await writeLocal(KEYS.USER, user);
+        return user;
       }
     } catch (e) {
       console.error('Supabase getUser failed, using local fallback:', e);
     }
   }
 
-  const data = await AsyncStorage.getItem(KEYS.USER);
-  return data ? JSON.parse(data) : null;
+  return local;
+}
+
+// Columns the client may not be allowed to write once the server owns them
+// (see supabase/migrations/001_audit_fixes.sql)
+const SERVER_OWNED_PROFILE_FIELDS = ['xp', 'level', 'total_workouts'] as const;
+
+async function syncProfileRow(user: User): Promise<void> {
+  const payload: Record<string, unknown> = {
+    display_name: user.name,
+    current_streak: user.current_streak,
+    highest_streak: user.highest_streak,
+    badges: user.badges,
+    xp: user.xp,
+    level: user.level,
+    total_workouts: user.total_workouts,
+  };
+
+  // Retry by dropping fields the live schema rejects, so the app works
+  // both before and after the migration is applied.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { error } = await supabase.from('profiles').update(payload).eq('id', user.id);
+    if (!error) return;
+
+    if ((error.code === '42703' || error.code === 'PGRST204') && 'display_name' in payload) {
+      delete payload.display_name; // column not added yet
+      continue;
+    }
+    if (error.code === '42501' && 'xp' in payload) {
+      SERVER_OWNED_PROFILE_FIELDS.forEach(f => delete payload[f]); // server computes these
+      continue;
+    }
+    console.error('Supabase update profiles failed:', error);
+    return;
+  }
 }
 
 export async function saveUser(user: Partial<User>): Promise<User> {
-  const existing = await getUser();
-  
-  // Resolve correct user ID: prioritize passed id, then active Supabase session, then existing local ID
-  let resolvedId = user.id || existing?.id || generateId();
-  if (isSupabaseConfigured && !user.id) {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user) {
-        resolvedId = session.user.id;
-      }
-    } catch (e) {
-      console.error('Failed to resolve authenticated session ID in saveUser:', e);
-    }
-  }
+  const existing = await getLocalUser();
+  const sessionUserId = await getSessionUserId();
+
+  // Prefer explicit id, then the authenticated session, then the existing local id
+  const resolvedId = user.id || sessionUserId || existing?.id || generateId();
+  const base = existing?.id === resolvedId ? existing : null;
 
   const updated: User = {
     id: resolvedId,
-    name: user.name || existing?.name || '',
-    email: user.email || existing?.email || '',
-    age: user.age ?? existing?.age,
-    weight_kg: user.weight_kg ?? existing?.weight_kg,
-    height_cm: user.height_cm ?? existing?.height_cm,
-    goal: user.goal || existing?.goal || 'general_fitness',
-    onboarding_completed: user.onboarding_completed ?? existing?.onboarding_completed ?? false,
-    xp: user.xp ?? existing?.xp ?? 0,
-    level: user.level ?? existing?.level ?? 1,
-    current_streak: user.current_streak ?? existing?.current_streak ?? 0,
-    highest_streak: user.highest_streak ?? existing?.highest_streak ?? 0,
-    total_workouts: user.total_workouts ?? existing?.total_workouts ?? 0,
-    badges: user.badges ?? existing?.badges ?? [],
-    created_at: existing?.created_at || new Date().toISOString(),
+    name: user.name || base?.name || '',
+    email: user.email || base?.email || '',
+    age: user.age ?? base?.age,
+    weight_kg: user.weight_kg ?? base?.weight_kg,
+    height_cm: user.height_cm ?? base?.height_cm,
+    goal: user.goal || base?.goal || 'general_fitness',
+    onboarding_completed: user.onboarding_completed ?? base?.onboarding_completed ?? false,
+    xp: user.xp ?? base?.xp ?? 0,
+    level: user.level ?? base?.level ?? 1,
+    current_streak: user.current_streak ?? base?.current_streak ?? 0,
+    highest_streak: user.highest_streak ?? base?.highest_streak ?? 0,
+    total_workouts: user.total_workouts ?? base?.total_workouts ?? 0,
+    badges: user.badges ?? base?.badges ?? [],
+    created_at: base?.created_at || new Date().toISOString(),
   };
-  await AsyncStorage.setItem(KEYS.USER, JSON.stringify(updated));
+  await writeLocal(KEYS.USER, updated);
 
-  if (isSupabaseConfigured) {
+  if (sessionUserId && sessionUserId === updated.id) {
     try {
-      // First upsert to users table to satisfy foreign keys
+      // users row must exist first: workouts/progress/templates reference it
       const { error: userError } = await supabase.from('users').upsert({
         id: updated.id,
         name: updated.name,
         email: updated.email,
-        age: updated.age,
-        weight_kg: updated.weight_kg,
-        height_cm: updated.height_cm,
+        age: updated.age ?? null,
+        weight_kg: updated.weight_kg ?? null,
+        height_cm: updated.height_cm ?? null,
         goal: updated.goal,
         onboarding_completed: updated.onboarding_completed,
       });
-      if (userError) {
-        console.error('Supabase upsert users failed:', userError);
-      }
+      if (userError) console.error('Supabase upsert users failed:', userError);
 
-      // Then upsert to profiles table
-      const { error: profileError } = await supabase.from('profiles').upsert({
-        id: updated.id,
-        username: updated.name,
-        xp: updated.xp,
-        level: updated.level,
-        current_streak: updated.current_streak,
-        highest_streak: updated.highest_streak,
-        total_workouts: updated.total_workouts,
-        badges: updated.badges,
-      });
-      if (profileError) {
-        console.error('Supabase upsert profiles failed:', profileError);
-      }
+      await syncProfileRow(updated);
     } catch (e) {
       console.error('Supabase saveUser failed:', e);
     }
@@ -257,54 +337,171 @@ export async function saveUser(user: Partial<User>): Promise<User> {
 }
 
 // ───────────────────────────────────────────────────────
+// Workout Sync
+// ───────────────────────────────────────────────────────
+
+async function getLocalWorkouts(): Promise<Workout[]> {
+  return readLocal<Workout[]>(KEYS.WORKOUTS, []);
+}
+
+async function uploadWorkout(workout: Workout, userId: string): Promise<boolean> {
+  const { error: wError } = await supabase.from('workouts').upsert({
+    id: workout.id,
+    user_id: userId,
+    workout_date: workout.workout_date,
+    name: workout.name,
+    muscle_groups: workout.muscle_groups,
+    duration_minutes: workout.duration_minutes,
+    notes: workout.notes,
+    total_volume_kg: workout.total_volume_kg,
+    created_at: workout.created_at,
+  });
+  if (wError) {
+    console.error('Supabase workout upload failed:', wError);
+    return false;
+  }
+
+  if (workout.exercises.length === 0) return true;
+
+  // estimated_1rm is a generated column in the database — never send it
+  const { error: exError } = await supabase.from('exercises').upsert(
+    workout.exercises.map(e => ({
+      id: e.id,
+      workout_id: workout.id,
+      exercise_name: e.exercise_name,
+      set_number: e.set_number,
+      reps: e.reps,
+      weight_kg: e.weight_kg,
+      rpe: e.rpe ?? null,
+      is_warmup: e.is_warmup,
+      notes: e.notes ?? null,
+    }))
+  );
+  if (exError) {
+    console.error('Supabase exercises upload failed:', exError);
+    return false;
+  }
+  return true;
+}
+
+let flushPromise: Promise<number> | null = null;
+
+/**
+ * Push queued workout uploads and deletions to Supabase.
+ * Returns the number of operations still pending afterwards.
+ */
+export function flushPendingSync(): Promise<number> {
+  if (!flushPromise) {
+    flushPromise = doFlush().finally(() => { flushPromise = null; });
+  }
+  return flushPromise;
+}
+
+async function doFlush(): Promise<number> {
+  const pendingWorkouts = await readLocal<string[]>(KEYS.PENDING_WORKOUTS, []);
+  const pendingDeletes = await readLocal<string[]>(KEYS.PENDING_DELETES, []);
+  const userId = await getSessionUserId();
+  if (!userId) return pendingWorkouts.length + pendingDeletes.length;
+
+  for (const id of pendingDeletes) {
+    try {
+      const { error } = await supabase.from('workouts').delete().eq('id', id).eq('user_id', userId);
+      if (!error) await removeFromSet(KEYS.PENDING_DELETES, id);
+    } catch (e) {
+      console.warn('Pending delete still failing:', e);
+    }
+  }
+
+  if (pendingWorkouts.length > 0) {
+    const local = await getLocalWorkouts();
+    for (const id of pendingWorkouts) {
+      const workout = local.find(w => w.id === id);
+      if (!workout) {
+        await removeFromSet(KEYS.PENDING_WORKOUTS, id);
+        continue;
+      }
+      try {
+        if (await uploadWorkout(workout, userId)) {
+          await removeFromSet(KEYS.PENDING_WORKOUTS, id);
+        }
+      } catch (e) {
+        console.warn('Pending workout upload still failing:', e);
+      }
+    }
+  }
+
+  const remaining = (await readLocal<string[]>(KEYS.PENDING_WORKOUTS, [])).length
+    + (await readLocal<string[]>(KEYS.PENDING_DELETES, [])).length;
+  return remaining;
+}
+
+export async function getPendingSyncCount(): Promise<number> {
+  const a = await readLocal<string[]>(KEYS.PENDING_WORKOUTS, []);
+  const b = await readLocal<string[]>(KEYS.PENDING_DELETES, []);
+  return a.length + b.length;
+}
+
+// ───────────────────────────────────────────────────────
 // Workout Operations
 // ───────────────────────────────────────────────────────
 
-export async function getWorkouts(): Promise<Workout[]> {
-  if (isSupabaseConfigured) {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user) {
-        const { data, error } = await supabase
-          .from('workouts')
-          .select(`
-            id,
-            user_id,
-            workout_date,
-            name,
-            muscle_groups,
-            duration_minutes,
-            notes,
-            total_volume_kg,
-            created_at,
-            exercises (
-              id,
-              workout_id,
-              exercise_name,
-              set_number,
-              reps,
-              weight_kg,
-              rpe,
-              is_warmup,
-              estimated_1rm,
-              notes
-            )
-          `)
-          .eq('user_id', session.user.id)
-          .order('workout_date', { ascending: false });
+function sortByDateDesc(workouts: Workout[]): Workout[] {
+  return workouts.sort((a, b) => {
+    const byDate = b.workout_date.localeCompare(a.workout_date);
+    return byDate !== 0 ? byDate : (b.created_at || '').localeCompare(a.created_at || '');
+  });
+}
 
-        if (!error && data) {
-          const formatted: Workout[] = (data as any[]).map(w => ({
-            id: w.id,
-            user_id: w.user_id,
-            workout_date: w.workout_date,
-            name: w.name,
-            muscle_groups: w.muscle_groups || [],
-            duration_minutes: w.duration_minutes || 0,
-            notes: w.notes || '',
-            total_volume_kg: Number(w.total_volume_kg) || 0,
-            created_at: w.created_at,
-            exercises: (w.exercises || []).map((e: any) => ({
+// Several screens call getWorkouts() on every focus; share one request
+const WORKOUTS_CACHE_MS = 3000;
+let workoutsCache: { at: number; promise: Promise<Workout[]> } | null = null;
+
+export function invalidateWorkoutsCache() {
+  workoutsCache = null;
+}
+
+export function getWorkouts(): Promise<Workout[]> {
+  if (workoutsCache && Date.now() - workoutsCache.at < WORKOUTS_CACHE_MS) {
+    return workoutsCache.promise;
+  }
+  const promise = fetchWorkouts().catch(err => {
+    invalidateWorkoutsCache();
+    throw err;
+  });
+  workoutsCache = { at: Date.now(), promise };
+  return promise;
+}
+
+async function fetchWorkouts(): Promise<Workout[]> {
+  const userId = await getSessionUserId();
+
+  if (userId) {
+    try {
+      await flushPendingSync();
+
+      const { data, error } = await supabase
+        .from('workouts')
+        .select(`
+          id, user_id, workout_date, name, muscle_groups, duration_minutes,
+          notes, total_volume_kg, created_at,
+          exercises ( id, workout_id, exercise_name, set_number, reps, weight_kg, rpe, is_warmup, estimated_1rm, notes )
+        `)
+        .eq('user_id', userId)
+        .order('workout_date', { ascending: false });
+
+      if (!error && data) {
+        const remote: Workout[] = (data as any[]).map(w => ({
+          id: w.id,
+          user_id: w.user_id,
+          workout_date: w.workout_date,
+          name: w.name,
+          muscle_groups: w.muscle_groups || [],
+          duration_minutes: w.duration_minutes || 0,
+          notes: w.notes || '',
+          total_volume_kg: Number(w.total_volume_kg) || 0,
+          created_at: w.created_at,
+          exercises: (w.exercises || [])
+            .map((e: any) => ({
               id: e.id,
               workout_id: e.workout_id,
               exercise_name: e.exercise_name,
@@ -315,31 +512,43 @@ export async function getWorkouts(): Promise<Workout[]> {
               is_warmup: e.is_warmup || false,
               estimated_1rm: Number(e.estimated_1rm) || 0,
               notes: e.notes || '',
-            })),
-          }));
+            }))
+            .sort((a: WorkoutExercise, b: WorkoutExercise) => a.set_number - b.set_number),
+        }));
 
-          // Read local storage to preserve any local workouts not yet synced
-          const localRaw = await AsyncStorage.getItem(KEYS.WORKOUTS);
-          const localWorkouts: Workout[] = localRaw ? JSON.parse(localRaw) : [];
-          
-          const remoteIds = new Set(formatted.map(w => w.id));
-          const unsyncedLocal = localWorkouts.filter(w => !remoteIds.has(w.id));
-          const merged = [...formatted, ...unsyncedLocal].sort(
-            (a, b) => new Date(b.workout_date).getTime() - new Date(a.workout_date).getTime()
-          );
+        const local = await getLocalWorkouts();
+        const localById = new Map(local.map(w => [w.id, w]));
+        const pendingUploads = new Set(await readLocal<string[]>(KEYS.PENDING_WORKOUTS, []));
+        const pendingDeletes = new Set(await readLocal<string[]>(KEYS.PENDING_DELETES, []));
+        const remoteIds = new Set(remote.map(w => w.id));
 
-          await AsyncStorage.setItem(KEYS.WORKOUTS, JSON.stringify(merged));
-          return merged;
+        // Repair: older app versions saved the workout row but the sets
+        // failed to upload. Keep the local sets and queue a re-upload.
+        for (const w of remote) {
+          const localCopy = localById.get(w.id);
+          if (w.exercises.length === 0 && localCopy && localCopy.exercises.length > 0) {
+            w.exercises = localCopy.exercises;
+            await addToSet(KEYS.PENDING_WORKOUTS, w.id);
+          }
         }
+
+        // Keep local workouts only if they are still waiting to upload —
+        // anything else missing from the server was deleted elsewhere.
+        const unsynced = local.filter(w => !remoteIds.has(w.id) && pendingUploads.has(w.id));
+        const merged = sortByDateDesc(
+          [...remote, ...unsynced].filter(w => !pendingDeletes.has(w.id))
+        );
+
+        await writeLocal(KEYS.WORKOUTS, merged);
+        return merged;
       }
+      if (error) console.error('Supabase getWorkouts failed:', error);
     } catch (e) {
       console.error('Supabase getWorkouts failed, using local fallback:', e);
     }
   }
 
-  const data = await AsyncStorage.getItem(KEYS.WORKOUTS);
-  const workouts: Workout[] = data ? JSON.parse(data) : [];
-  return workouts.sort((a, b) => new Date(b.workout_date).getTime() - new Date(a.workout_date).getTime());
+  return sortByDateDesc(await getLocalWorkouts());
 }
 
 export async function getWorkoutById(id: string): Promise<Workout | null> {
@@ -354,77 +563,37 @@ export async function saveWorkout(workout: Omit<Workout, 'id' | 'created_at'>): 
     created_at: new Date().toISOString(),
   };
 
-  // Ensure all exercise IDs are valid UUIDs
   newWorkout.exercises = newWorkout.exercises.map(e => ({
     ...e,
     id: ensureUUID(e.id),
     workout_id: newWorkout.id,
   }));
 
-  // Read directly from AsyncStorage to avoid recursive Supabase fetch
-  const localData = await AsyncStorage.getItem(KEYS.WORKOUTS);
-  const workouts: Workout[] = localData ? JSON.parse(localData) : [];
+  const workouts = await getLocalWorkouts();
   workouts.push(newWorkout);
-  await AsyncStorage.setItem(KEYS.WORKOUTS, JSON.stringify(workouts));
+  await writeLocal(KEYS.WORKOUTS, workouts);
+  await addToSet(KEYS.PENDING_WORKOUTS, newWorkout.id);
+  invalidateWorkoutsCache();
 
-  if (isSupabaseConfigured) {
-    try {
-      const { error: wError } = await supabase.from('workouts').insert({
-        id: newWorkout.id,
-        user_id: newWorkout.user_id,
-        workout_date: newWorkout.workout_date,
-        name: newWorkout.name,
-        muscle_groups: newWorkout.muscle_groups,
-        duration_minutes: newWorkout.duration_minutes,
-        notes: newWorkout.notes,
-        total_volume_kg: newWorkout.total_volume_kg,
-        created_at: newWorkout.created_at,
-      });
-
-      if (wError) {
-        console.error('Supabase parent saveWorkout failed:', wError);
-      } else {
-        const exercisesToInsert = newWorkout.exercises.map(e => ({
-          id: e.id,
-          workout_id: newWorkout.id,
-          exercise_name: e.exercise_name,
-          set_number: e.set_number,
-          reps: e.reps,
-          weight_kg: e.weight_kg,
-          rpe: e.rpe,
-          is_warmup: e.is_warmup,
-          estimated_1rm: e.estimated_1rm,
-          notes: e.notes,
-        }));
-
-        const { error: exError } = await supabase.from('exercises').insert(exercisesToInsert);
-        if (exError) console.error('Supabase child exercises save failed:', exError);
-      }
-    } catch (e) {
-      console.error('Supabase saveWorkout exception:', e);
-    }
-  }
+  // Try to upload now; if it fails it stays queued for the next sync
+  await flushPendingSync();
 
   return newWorkout;
 }
 
 export async function deleteWorkout(id: string): Promise<void> {
-  // Read directly from AsyncStorage to avoid recursive Supabase fetch
-  const localData = await AsyncStorage.getItem(KEYS.WORKOUTS);
-  const workouts: Workout[] = localData ? JSON.parse(localData) : [];
-  const filtered = workouts.filter(w => w.id !== id);
-  await AsyncStorage.setItem(KEYS.WORKOUTS, JSON.stringify(filtered));
+  const workouts = await getLocalWorkouts();
+  await writeLocal(KEYS.WORKOUTS, workouts.filter(w => w.id !== id));
 
-  if (isSupabaseConfigured) {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user) {
-        await supabase.from('workouts').delete().eq('id', id).eq('user_id', session.user.id);
-      }
-    } catch (e) {
-      console.error('Supabase deleteWorkout failed:', e);
-    }
+  const pendingUploads = await readLocal<string[]>(KEYS.PENDING_WORKOUTS, []);
+  if (pendingUploads.includes(id)) {
+    // Never reached the server — nothing to delete remotely
+    await removeFromSet(KEYS.PENDING_WORKOUTS, id);
+  } else if (isSupabaseConfigured) {
+    await addToSet(KEYS.PENDING_DELETES, id);
   }
+  invalidateWorkoutsCache();
+  await flushPendingSync();
 }
 
 export async function getExerciseHistory(exerciseName: string): Promise<{
@@ -434,6 +603,7 @@ export async function getExerciseHistory(exerciseName: string): Promise<{
   total_volume: number;
 }[]> {
   const workouts = await getWorkouts();
+  const target = exerciseName.toLowerCase();
   const history: {
     workout_date: string;
     sets: WorkoutExercise[];
@@ -443,7 +613,7 @@ export async function getExerciseHistory(exerciseName: string): Promise<{
 
   for (const workout of workouts) {
     const exerciseSets = workout.exercises.filter(
-      e => e.exercise_name.toLowerCase() === exerciseName.toLowerCase() && !e.is_warmup
+      e => e.exercise_name.toLowerCase() === target && !e.is_warmup
     );
     if (exerciseSets.length > 0) {
       history.push({
@@ -480,79 +650,25 @@ export async function getWorkoutStats(): Promise<{
 }> {
   const workouts = await getWorkouts();
   const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const startOfWeek = new Date(now);
-  startOfWeek.setDate(now.getDate() - now.getDay());
-  startOfWeek.setHours(0, 0, 0, 0);
-  const startOfLastWeek = new Date(startOfWeek);
-  startOfLastWeek.setDate(startOfLastWeek.getDate() - 7);
+  const monthStart = toLocalDateStr(new Date(now.getFullYear(), now.getMonth(), 1));
+  const weekStart = toLocalDateStr(getStartOfWeek(now));
+  const lastWeekStart = toLocalDateStr(addDays(getStartOfWeek(now), -7));
 
-  const thisMonthWorkouts = workouts.filter(w => new Date(w.workout_date) >= startOfMonth).length;
-  const thisWeekWorkouts = workouts.filter(w => new Date(w.workout_date) >= startOfWeek).length;
-  const thisWeekVolume = workouts
-    .filter(w => new Date(w.workout_date) >= startOfWeek)
-    .reduce((sum, w) => sum + w.total_volume_kg, 0);
-  const lastWeekVolume = workouts
-    .filter(w => {
-      const d = new Date(w.workout_date);
-      return d >= startOfLastWeek && d < startOfWeek;
-    })
-    .reduce((sum, w) => sum + w.total_volume_kg, 0);
+  const thisWeek = workouts.filter(w => w.workout_date >= weekStart);
+  const lastWeek = workouts.filter(w => w.workout_date >= lastWeekStart && w.workout_date < weekStart);
 
-  // Calculate streak
-  let currentStreak = 0;
-  let longestStreak = 0;
-  let tempStreak = 0;
-  const workoutDates = [...new Set(workouts.map(w => w.workout_date))].sort().reverse();
-  
-  if (workoutDates.length > 0) {
-    const today = now.toISOString().split('T')[0];
-    const yesterday = new Date(now);
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayStr = yesterday.toISOString().split('T')[0];
-
-    const allowedGap = useSettingsStore.getState().streakGraceDays || 2;
-
-    // Check if there's a workout today or yesterday to start the streak
-    if (workoutDates[0] === today || workoutDates[0] === yesterdayStr) {
-      currentStreak = 1;
-      for (let i = 1; i < workoutDates.length; i++) {
-        const prev = new Date(workoutDates[i - 1]);
-        const curr = new Date(workoutDates[i]);
-        const diffDays = Math.floor((prev.getTime() - curr.getTime()) / (1000 * 60 * 60 * 24));
-        if (diffDays <= allowedGap) {
-          currentStreak++;
-        } else {
-          break;
-        }
-      }
-    }
-
-    // Calculate longest streak
-    tempStreak = 1;
-    for (let i = 1; i < workoutDates.length; i++) {
-      const prev = new Date(workoutDates[i - 1]);
-      const curr = new Date(workoutDates[i]);
-      const diffDays = Math.floor((prev.getTime() - curr.getTime()) / (1000 * 60 * 60 * 24));
-      if (diffDays <= allowedGap) {
-        tempStreak++;
-      } else {
-        longestStreak = Math.max(longestStreak, tempStreak);
-        tempStreak = 1;
-      }
-    }
-    longestStreak = Math.max(longestStreak, tempStreak);
-  }
+  const allowedGap = Math.max(1, useSettingsStore.getState().streakGraceDays ?? 2);
+  const { currentStreak, longestStreak } = calculateStreaks(workouts.map(w => w.workout_date), allowedGap);
 
   return {
     totalWorkouts: workouts.length,
-    thisMonthWorkouts,
+    thisMonthWorkouts: workouts.filter(w => w.workout_date >= monthStart).length,
     currentStreak,
-    longestStreak: Math.max(longestStreak, currentStreak),
+    longestStreak,
     totalVolume: workouts.reduce((sum, w) => sum + w.total_volume_kg, 0),
-    thisWeekVolume: Math.round(thisWeekVolume),
-    lastWeekVolume: Math.round(lastWeekVolume),
-    thisWeekWorkouts,
+    thisWeekVolume: Math.round(thisWeek.reduce((sum, w) => sum + w.total_volume_kg, 0)),
+    lastWeekVolume: Math.round(lastWeek.reduce((sum, w) => sum + w.total_volume_kg, 0)),
+    thisWeekWorkouts: thisWeek.length,
   };
 }
 
@@ -560,7 +676,7 @@ export async function getWorkoutDatesForMonth(year: number, month: number): Prom
   const workouts = await getWorkouts();
   return workouts
     .filter(w => {
-      const d = new Date(w.workout_date);
+      const d = parseLocalDate(w.workout_date);
       return d.getFullYear() === year && d.getMonth() === month;
     })
     .map(w => w.workout_date);
@@ -571,65 +687,52 @@ export async function getWorkoutDatesForMonth(year: number, month: number): Prom
 // ───────────────────────────────────────────────────────
 
 export async function getProgressEntries(): Promise<ProgressEntry[]> {
-  if (isSupabaseConfigured) {
+  const userId = await getSessionUserId();
+  if (userId) {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user) {
-        const { data, error } = await supabase
-          .from('progress')
-          .select('*')
-          .eq('user_id', session.user.id)
-          .order('date', { ascending: false });
+      const { data, error } = await supabase
+        .from('progress')
+        .select('*')
+        .eq('user_id', userId)
+        .order('date', { ascending: false });
 
-        if (!error && data) {
-          const formatted: ProgressEntry[] = (data as any[]).map(pe => ({
-            id: pe.id,
-            user_id: pe.user_id,
-            body_weight: Number(pe.body_weight) || 0,
-            date: pe.date,
-            notes: pe.notes || '',
-          }));
-
-          await AsyncStorage.setItem(KEYS.PROGRESS, JSON.stringify(formatted));
-          return formatted;
-        }
+      if (!error && data) {
+        const formatted: ProgressEntry[] = (data as any[]).map(pe => ({
+          id: pe.id,
+          user_id: pe.user_id,
+          body_weight: Number(pe.body_weight) || 0,
+          date: pe.date,
+          notes: pe.notes || '',
+        }));
+        await writeLocal(KEYS.PROGRESS, formatted);
+        return formatted;
       }
     } catch (e) {
       console.error('Supabase getProgressEntries failed, using local fallback:', e);
     }
   }
 
-  const data = await AsyncStorage.getItem(KEYS.PROGRESS);
-  const entries: ProgressEntry[] = data ? JSON.parse(data) : [];
-  return entries.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  const entries = await readLocal<ProgressEntry[]>(KEYS.PROGRESS, []);
+  return entries.sort((a, b) => b.date.localeCompare(a.date));
 }
 
 export async function saveProgressEntry(entry: Omit<ProgressEntry, 'id'>): Promise<ProgressEntry> {
   const newEntry: ProgressEntry = { ...entry, id: generateId() };
 
-  // 1. Optimistic local update
-  const entries = await getProgressEntries();
+  const entries = await readLocal<ProgressEntry[]>(KEYS.PROGRESS, []);
   entries.push(newEntry);
-  await AsyncStorage.setItem(KEYS.PROGRESS, JSON.stringify(entries));
+  await writeLocal(KEYS.PROGRESS, entries);
 
-  // 2. Sync to Supabase in background
-  if (isSupabaseConfigured) {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user) {
-        const supabaseProgress = {
-          id: newEntry.id,
-          user_id: session.user.id,
-          body_weight: newEntry.body_weight,
-          date: newEntry.date,
-          notes: newEntry.notes || null,
-        };
-
-        await supabase.from('progress').upsert(supabaseProgress);
-      }
-    } catch (e) {
-      console.error('Supabase saveProgressEntry failed:', e);
-    }
+  const userId = await getSessionUserId();
+  if (userId) {
+    const { error } = await supabase.from('progress').upsert({
+      id: newEntry.id,
+      user_id: userId,
+      body_weight: newEntry.body_weight,
+      date: newEntry.date,
+      notes: newEntry.notes || null,
+    });
+    if (error) console.error('Supabase saveProgressEntry failed:', error);
   }
 
   return newEntry;
@@ -640,73 +743,63 @@ export async function saveProgressEntry(entry: Omit<ProgressEntry, 'id'>): Promi
 // ───────────────────────────────────────────────────────
 
 export async function getPRs(): Promise<PRRecord[]> {
-  if (isSupabaseConfigured) {
+  const userId = await getSessionUserId();
+  if (userId) {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user) {
-        const { data, error } = await supabase
-          .from('personal_records')
-          .select('*')
-          .eq('user_id', session.user.id)
-          .order('achieved_at', { ascending: false });
+      const { data, error } = await supabase
+        .from('personal_records')
+        .select('*')
+        .eq('user_id', userId)
+        .order('achieved_at', { ascending: false });
 
-        if (!error && data) {
-          const formatted: PRRecord[] = (data as any[]).map(pr => ({
-            id: pr.id,
-            user_id: pr.user_id,
-            exercise_name: pr.exercise_name,
-            record_type: pr.record_type,
-            value: Number(pr.value) || 0,
-            previous_value: pr.previous_value ? Number(pr.previous_value) : undefined,
-            improvement_pct: pr.improvement_pct ? Number(pr.improvement_pct) : undefined,
-            achieved_at: pr.achieved_at,
-            workout_id: pr.workout_id || '',
-          }));
-
-          await AsyncStorage.setItem(KEYS.PRS, JSON.stringify(formatted));
-          return formatted;
-        }
+      if (!error && data) {
+        const formatted: PRRecord[] = (data as any[]).map(pr => ({
+          id: pr.id,
+          user_id: pr.user_id,
+          exercise_name: pr.exercise_name,
+          record_type: pr.record_type,
+          value: Number(pr.value) || 0,
+          previous_value: pr.previous_value ? Number(pr.previous_value) : undefined,
+          improvement_pct: pr.improvement_pct ? Number(pr.improvement_pct) : undefined,
+          achieved_at: pr.achieved_at,
+          workout_id: pr.workout_id || '',
+        }));
+        await writeLocal(KEYS.PRS, formatted);
+        return formatted;
       }
     } catch (e) {
       console.error('Supabase getPRs failed, using local fallback:', e);
     }
   }
 
-  const data = await AsyncStorage.getItem(KEYS.PRS);
-  const prs: PRRecord[] = data ? JSON.parse(data) : [];
-  return prs.sort((a, b) => new Date(b.achieved_at).getTime() - new Date(a.achieved_at).getTime());
+  const prs = await readLocal<PRRecord[]>(KEYS.PRS, []);
+  return prs.sort((a, b) => b.achieved_at.localeCompare(a.achieved_at));
 }
 
 export async function savePR(pr: Omit<PRRecord, 'id'>): Promise<PRRecord> {
   const newPR: PRRecord = { ...pr, id: generateId() };
 
-  // 1. Optimistic local update
-  const prs = await getPRs();
+  const prs = await readLocal<PRRecord[]>(KEYS.PRS, []);
   prs.push(newPR);
-  await AsyncStorage.setItem(KEYS.PRS, JSON.stringify(prs));
+  await writeLocal(KEYS.PRS, prs);
 
-  // 2. Sync to Supabase in background
-  if (isSupabaseConfigured) {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user) {
-        const supabasePR = {
-          id: newPR.id,
-          user_id: session.user.id,
-          exercise_name: newPR.exercise_name,
-          record_type: newPR.record_type,
-          value: newPR.value,
-          previous_value: newPR.previous_value || null,
-          improvement_pct: newPR.improvement_pct || null,
-          achieved_at: newPR.achieved_at,
-          workout_id: newPR.workout_id || null, // Map empty string to null to satisfy foreign key
-        };
-
-        await supabase.from('personal_records').upsert(supabasePR);
-      }
-    } catch (e) {
-      console.error('Supabase savePR failed:', e);
-    }
+  const userId = await getSessionUserId();
+  if (userId) {
+    // The workout may still be queued for upload; null avoids an FK failure
+    const pendingUploads = await readLocal<string[]>(KEYS.PENDING_WORKOUTS, []);
+    const workoutId = newPR.workout_id && !pendingUploads.includes(newPR.workout_id) ? newPR.workout_id : null;
+    const { error } = await supabase.from('personal_records').upsert({
+      id: newPR.id,
+      user_id: userId,
+      exercise_name: newPR.exercise_name,
+      record_type: newPR.record_type,
+      value: newPR.value,
+      previous_value: newPR.previous_value ?? null,
+      improvement_pct: newPR.improvement_pct ?? null,
+      achieved_at: newPR.achieved_at,
+      workout_id: workoutId,
+    });
+    if (error) console.error('Supabase savePR failed:', error);
   }
 
   return newPR;
@@ -717,10 +810,9 @@ export async function getBestPRForExercise(exerciseName: string): Promise<{
   volume: number;
   maxReps: number;
 }> {
-  const prs = await getPRs();
-  const exercisePRs = prs.filter(
-    p => p.exercise_name.toLowerCase() === exerciseName.toLowerCase()
-  );
+  const prs = await readLocal<PRRecord[]>(KEYS.PRS, []);
+  const target = exerciseName.toLowerCase();
+  const exercisePRs = prs.filter(p => p.exercise_name.toLowerCase() === target);
 
   return {
     oneRM: Math.max(0, ...exercisePRs.filter(p => p.record_type === '1rm').map(p => p.value)),
@@ -733,9 +825,7 @@ export async function getBestPRForExercise(exerciseName: string): Promise<{
 // Template Operations
 // ───────────────────────────────────────────────────────
 
-export async function getTemplates(): Promise<WorkoutTemplate[]> {
-  // Define default system-level templates
-  const defaults: WorkoutTemplate[] = [
+const DEFAULT_TEMPLATES: WorkoutTemplate[] = [
     {
       id: 'default-push',
       user_id: '',
@@ -827,106 +917,94 @@ export async function getTemplates(): Promise<WorkoutTemplate[]> {
       ],
       is_default: true,
     },
-  ];
+];
 
-  if (isSupabaseConfigured) {
+async function getLocalCustomTemplates(): Promise<WorkoutTemplate[]> {
+  const stored = await readLocal<WorkoutTemplate[]>(KEYS.TEMPLATES, []);
+  return stored.filter(t => !t.is_default && !t.id.startsWith('default-'));
+}
+
+export async function getTemplates(): Promise<WorkoutTemplate[]> {
+  const userId = await getSessionUserId();
+  if (userId) {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user) {
-        const { data, error } = await supabase
-          .from('workout_templates')
-          .select('*')
-          .eq('user_id', session.user.id);
+      const { data, error } = await supabase
+        .from('workout_templates')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: true });
 
-        if (!error && data) {
-          const customTemplates: WorkoutTemplate[] = (data as any[]).map(t => ({
-            id: t.id,
-            user_id: t.user_id,
-            name: t.name,
-            muscle_groups: t.muscle_groups || [],
-            exercises: Array.isArray(t.exercises) ? t.exercises : JSON.parse(t.exercises || '[]'),
-            is_default: t.is_default || false,
-          }));
-
-          const combined = [...defaults, ...customTemplates];
-          await AsyncStorage.setItem(KEYS.TEMPLATES, JSON.stringify(combined));
-          return combined;
-        }
+      if (!error && data) {
+        const custom: WorkoutTemplate[] = (data as any[]).map(t => ({
+          id: t.id,
+          user_id: t.user_id,
+          name: t.name,
+          muscle_groups: t.muscle_groups || [],
+          exercises: Array.isArray(t.exercises) ? t.exercises : JSON.parse(t.exercises || '[]'),
+          is_default: false,
+        }));
+        await writeLocal(KEYS.TEMPLATES, custom);
+        return [...DEFAULT_TEMPLATES, ...custom];
       }
     } catch (e) {
       console.error('Supabase getTemplates failed, using local fallback:', e);
     }
   }
 
-  const data = await AsyncStorage.getItem(KEYS.TEMPLATES);
-  if (data) {
-    // Make sure we have the defaults if the storage is empty or somehow corrupted
-    const parsed = JSON.parse(data) as WorkoutTemplate[];
-    const custom = parsed.filter(t => !t.is_default);
-    return [...defaults, ...custom];
-  }
-
-  await AsyncStorage.setItem(KEYS.TEMPLATES, JSON.stringify(defaults));
-  return defaults;
+  return [...DEFAULT_TEMPLATES, ...(await getLocalCustomTemplates())];
 }
 
 export async function saveTemplate(template: Omit<WorkoutTemplate, 'id'>): Promise<WorkoutTemplate> {
-  const newTemplate: WorkoutTemplate = {
-    ...template,
-    id: generateId(),
-  };
+  const newTemplate: WorkoutTemplate = { ...template, id: generateId(), is_default: false };
 
-  // 1. Optimistic local update
-  const templates = await getTemplates();
-  templates.push(newTemplate);
-  await AsyncStorage.setItem(KEYS.TEMPLATES, JSON.stringify(templates));
+  const custom = await getLocalCustomTemplates();
+  custom.push(newTemplate);
+  await writeLocal(KEYS.TEMPLATES, custom);
 
-  // 2. Sync to Supabase in background
-  if (isSupabaseConfigured) {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user) {
-        const supabaseTemplate = {
-          id: newTemplate.id,
-          user_id: session.user.id,
-          name: newTemplate.name,
-          muscle_groups: newTemplate.muscle_groups,
-          exercises: newTemplate.exercises, // JSONB
-          is_default: newTemplate.is_default,
-        };
-
-        await supabase.from('workout_templates').upsert(supabaseTemplate);
-      }
-    } catch (e) {
-      console.error('Supabase saveTemplate failed:', e);
-    }
+  const userId = await getSessionUserId();
+  if (userId) {
+    const { error } = await supabase.from('workout_templates').upsert({
+      id: newTemplate.id,
+      user_id: userId,
+      name: newTemplate.name,
+      muscle_groups: newTemplate.muscle_groups,
+      exercises: newTemplate.exercises,
+      is_default: false,
+    });
+    if (error) console.error('Supabase saveTemplate failed:', error);
   }
 
   return newTemplate;
 }
 
 export async function deleteTemplate(id: string): Promise<void> {
-  // 1. Optimistic local deletion
-  const templates = await getTemplates();
-  const updated = templates.filter(t => t.id !== id);
-  await AsyncStorage.setItem(KEYS.TEMPLATES, JSON.stringify(updated));
+  if (id.startsWith('default-')) return;
 
-  // 2. Sync deletion to Supabase
-  if (isSupabaseConfigured && !id.startsWith('default-')) {
-    try {
-      await supabase.from('workout_templates').delete().eq('id', id);
-    } catch (e) {
-      console.error('Supabase deleteTemplate failed:', e);
-    }
+  const custom = await getLocalCustomTemplates();
+  await writeLocal(KEYS.TEMPLATES, custom.filter(t => t.id !== id));
+
+  const userId = await getSessionUserId();
+  if (userId) {
+    const { error } = await supabase.from('workout_templates').delete().eq('id', id).eq('user_id', userId);
+    if (error) console.error('Supabase deleteTemplate failed:', error);
   }
 }
 
 // ───────────────────────────────────────────────────────
-// Seed Demo Data (for showcasing)
+// Seed Demo Data (offline / local accounts only)
 // ───────────────────────────────────────────────────────
 
+/** Demo data is local-only; on a synced account it would pollute the public leaderboard */
+export async function canSeedDemoData(): Promise<boolean> {
+  return !(await getSessionUserId());
+}
+
 export async function seedDemoData(): Promise<void> {
-  let user = await getUser();
+  if (!(await canSeedDemoData())) {
+    throw new Error('Demo data is only available for offline accounts.');
+  }
+
+  let user = await getLocalUser();
   if (!user) {
     user = await saveUser({
       name: 'Demo Athlete',
@@ -937,7 +1015,6 @@ export async function seedDemoData(): Promise<void> {
     });
   }
 
-  // Generate 30 days of workout data
   const exercises = [
     { name: 'Barbell Bench Press', baseWeight: 60, baseReps: 8 },
     { name: 'Barbell Back Squat', baseWeight: 80, baseReps: 6 },
@@ -959,16 +1036,12 @@ export async function seedDemoData(): Promise<void> {
   const today = new Date();
 
   for (let day = 30; day >= 0; day -= 2) {
-    const workoutDate = new Date(today);
-    workoutDate.setDate(today.getDate() - day);
-    const dateStr = workoutDate.toISOString().split('T')[0];
-
+    const workoutDate = addDays(today, -day);
     const patternIdx = Math.floor((30 - day) / 2) % 3;
     const pattern = workoutPatterns[patternIdx];
-
-    // Progressive overload: slight weight increase over time
     const progressFactor = 1 + ((30 - day) / 30) * 0.15; // Up to 15% increase
 
+    const workoutId = generateId();
     const workoutExercises: WorkoutExercise[] = [];
     let totalVolume = 0;
 
@@ -984,7 +1057,7 @@ export async function seedDemoData(): Promise<void> {
 
         workoutExercises.push({
           id: generateId(),
-          workout_id: '',
+          workout_id: workoutId,
           exercise_name: ex.name,
           set_number: set,
           reps: setReps,
@@ -994,97 +1067,89 @@ export async function seedDemoData(): Promise<void> {
           estimated_1rm: Math.round(est1rm * 100) / 100,
         });
 
-        if (set !== 1) {
-          totalVolume += setReps * setWeight;
-        }
+        if (set !== 1) totalVolume += setReps * setWeight;
       }
     }
 
-    const workout: Workout = {
-      id: generateId(),
+    workouts.push({
+      id: workoutId,
       user_id: user.id,
-      workout_date: dateStr,
+      workout_date: toLocalDateStr(workoutDate),
       name: pattern.name,
       muscle_groups: pattern.muscleGroups,
       duration_minutes: 45 + Math.floor(Math.random() * 30),
       notes: '',
       total_volume_kg: Math.round(totalVolume),
-      exercises: workoutExercises.map(e => ({ ...e, workout_id: '' })),
+      exercises: workoutExercises,
       created_at: workoutDate.toISOString(),
-    };
-
-    // Set workout_id on exercises
-    workout.exercises = workout.exercises.map(e => ({ ...e, workout_id: workout.id }));
-    workouts.push(workout);
+    });
   }
 
-  await AsyncStorage.setItem(KEYS.WORKOUTS, JSON.stringify(workouts));
+  await writeLocal(KEYS.WORKOUTS, workouts);
+  invalidateWorkoutsCache();
 
-  // Generate some PRs from the workout data
   const prs: PRRecord[] = [];
   const exerciseNames = [...new Set(workouts.flatMap(w => w.exercises.map(e => e.exercise_name)))];
-  
   for (const name of exerciseNames) {
-    const allSets = workouts.flatMap(w => 
-      w.exercises.filter(e => e.exercise_name === name && !e.is_warmup)
-    );
+    const allSets = workouts.flatMap(w => w.exercises.filter(e => e.exercise_name === name && !e.is_warmup));
     if (allSets.length > 0) {
-      const best1rm = Math.max(...allSets.map(s => s.estimated_1rm));
       prs.push({
         id: generateId(),
         user_id: user.id,
         exercise_name: name,
         record_type: '1rm',
-        value: Math.round(best1rm * 100) / 100,
+        value: Math.round(Math.max(...allSets.map(s => s.estimated_1rm)) * 100) / 100,
         achieved_at: new Date().toISOString(),
         workout_id: workouts[workouts.length - 1].id,
       });
     }
   }
+  await writeLocal(KEYS.PRS, prs);
 
-  await AsyncStorage.setItem(KEYS.PRS, JSON.stringify(prs));
-
-  // Generate bodyweight progress
   const progressEntries: ProgressEntry[] = [];
   for (let day = 30; day >= 0; day -= 3) {
-    const date = new Date(today);
-    date.setDate(today.getDate() - day);
     progressEntries.push({
       id: generateId(),
       user_id: user.id,
       body_weight: (user.weight_kg || 70) + (Math.random() * 2 - 1),
-      date: date.toISOString().split('T')[0],
+      date: toLocalDateStr(addDays(today, -day)),
     });
   }
+  await writeLocal(KEYS.PROGRESS, progressEntries);
 
-  await AsyncStorage.setItem(KEYS.PROGRESS, JSON.stringify(progressEntries));
-
-  // Calculate and update user stats in storage to match the seeded demo data
   const workoutsTotalVolume = workouts.reduce((sum, w) => sum + w.total_volume_kg, 0);
   const xpEarned = Math.round(workoutsTotalVolume / 100) + 15 * workouts.length;
-  const newLevel = Math.floor(Math.sqrt(xpEarned / 100)) + 1;
+  const streaks = calculateStreaks(workouts.map(w => w.workout_date), 2);
 
   await saveUser({
     total_workouts: workouts.length,
-    current_streak: 3,
-    highest_streak: 5,
+    current_streak: streaks.currentStreak,
+    highest_streak: streaks.longestStreak,
     xp: xpEarned,
-    level: newLevel,
+    level: Math.floor(Math.sqrt(xpEarned / 100)) + 1,
     badges: ['first_workout', 'dedicated_10'],
   });
 }
 
-// Clear all data
+// ───────────────────────────────────────────────────────
+// Sign-out / account deletion
+// ───────────────────────────────────────────────────────
+
 export async function clearAllData(): Promise<void> {
-  const keys = [
-    KEYS.USER,
-    KEYS.WORKOUTS,
-    KEYS.TEMPLATES,
-    KEYS.PROGRESS,
-    KEYS.PRS,
-    KEYS.CUSTOM_EXERCISES,
-  ];
-  await Promise.all(keys.map(key => AsyncStorage.removeItem(key)));
+  await AsyncStorage.multiRemove([...Object.values(KEYS), ...OTHER_USER_KEYS]);
+  invalidateWorkoutsCache();
+}
+
+/**
+ * Permanently delete the signed-in account and all its data
+ * (requires the delete_my_account() function from the migration).
+ */
+export async function deleteAccount(): Promise<void> {
+  if (await getSessionUserId()) {
+    const { error } = await supabase.rpc('delete_my_account');
+    if (error) throw new Error(error.message);
+  }
+  await clearAllData();
 }
 
 // ───────────────────────────────────────────────────────
@@ -1092,13 +1157,7 @@ export async function clearAllData(): Promise<void> {
 // ───────────────────────────────────────────────────────
 
 export async function getCustomExercises(): Promise<ExerciseLibraryItem[]> {
-  try {
-    const data = await AsyncStorage.getItem(KEYS.CUSTOM_EXERCISES);
-    return data ? JSON.parse(data) : [];
-  } catch (error) {
-    console.error('Error fetching custom exercises:', error);
-    return [];
-  }
+  return readLocal<ExerciseLibraryItem[]>(KEYS.CUSTOM_EXERCISES, []);
 }
 
 export async function saveCustomExercise(exercise: Omit<ExerciseLibraryItem, 'id'>): Promise<ExerciseLibraryItem> {
@@ -1108,6 +1167,6 @@ export async function saveCustomExercise(exercise: Omit<ExerciseLibraryItem, 'id
     id: 'custom-' + generateId(),
   };
   customExercises.push(newExercise);
-  await AsyncStorage.setItem(KEYS.CUSTOM_EXERCISES, JSON.stringify(customExercises));
+  await writeLocal(KEYS.CUSTOM_EXERCISES, customExercises);
   return newExercise;
 }

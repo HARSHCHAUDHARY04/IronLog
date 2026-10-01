@@ -16,6 +16,7 @@ import {
   Modal,
   FlatList,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { 
   X, Timer, Trash2, CheckCircle2, Circle, 
@@ -30,6 +31,9 @@ import { useWorkoutStore } from '../stores/workoutStore';
 import { useAuthStore } from '../stores/authStore';
 import exerciseData from '../data/exercises.json';
 import * as Haptics from 'expo-haptics';
+import NumericInput from '../components/NumericInput';
+import { useUnit, toDisplayWeight, fromDisplayWeight, displayWeight } from '../lib/units';
+import { requestPermissions } from '../lib/notifications';
 import { getCustomExercises, saveCustomExercise } from '../lib/storage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -80,8 +84,12 @@ export default function WorkoutActiveScreen() {
   const [showPlateCalc, setShowPlateCalc] = useState(false);
   const [activePlateExIdx, setActivePlateExIdx] = useState<number | null>(null);
   const [activePlateSetIdx, setActivePlateSetIdx] = useState<number | null>(null);
-  const [plateTargetWeight, setPlateTargetWeight] = useState<string>('45');
-  const [barWeight, setBarWeight] = useState<number>(20);
+  const unit = useUnit();
+  const [plateTargetWeight, setPlateTargetWeight] = useState<string>('');
+  const [barWeight, setBarWeight] = useState<number>(unit === 'lbs' ? 45 : 20);
+  // Set while saving so the !isActive effect doesn't race our own navigation
+  const isSavingRef = useRef(false);
+  const [isSaving, setIsSaving] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
 
   // Completion Modal & Notes State
@@ -89,6 +97,19 @@ export default function WorkoutActiveScreen() {
   const [completionCaption, setCompletionCaption] = useState('');
   const [workoutNotes, setWorkoutNotes] = useState('');
   const [shareToFeed, setShareToFeed] = useState(true);
+
+  // Ask once, in context, so the rest timer can alert while the phone is locked
+  useEffect(() => {
+    (async () => {
+      try {
+        const asked = await AsyncStorage.getItem('ironlog_rest_notif_asked');
+        if (!asked) {
+          await AsyncStorage.setItem('ironlog_rest_notif_asked', '1');
+          await requestPermissions();
+        }
+      } catch {}
+    })();
+  }, []);
 
   // Update elapsed time
   useEffect(() => {
@@ -153,53 +174,56 @@ export default function WorkoutActiveScreen() {
   };
 
   const onSaveWorkout = async () => {
-    if (!user) return;
+    if (!user || isSavingRef.current) return;
+    isSavingRef.current = true;
+    setIsSaving(true);
     try {
-      // Complete the workout via workoutStore with workout notes
       const workout = await finishWorkout(user.id, workoutNotes);
-      if (workout) {
-        if (shareToFeed) {
-          try {
-            // Retrieve session PRs to count them
-            let prsHit = 0;
-            try {
-              const prsStr = await AsyncStorage.getItem('ironlog_session_prs');
-              if (prsStr) {
-                const prs = JSON.parse(prsStr);
-                prsHit = prs.length;
-              }
-            } catch (e) {}
-
-            const { shareWorkout } = require('../lib/feed');
-            await shareWorkout({
-              workout_name: workout.name,
-              muscle_groups: workout.muscle_groups,
-              duration_minutes: workout.duration_minutes,
-              total_volume_kg: workout.total_volume_kg,
-              exercise_count: exercises.length,
-              prs_hit: prsHit,
-              caption: completionCaption.trim()
-            });
-          } catch (feedErr) {
-            console.error('Failed to share workout to feed:', feedErr);
-          }
-        }
-        
-        try {
-          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        } catch (_) {}
-        
-        setShowCompletionModal(false);
-        setCompletionCaption('');
-        router.replace('/(tabs)');
+      if (!workout) {
+        isSavingRef.current = false;
+        return;
       }
+
+      if (shareToFeed) {
+        try {
+          let prsHit = 0;
+          const prsStr = await AsyncStorage.getItem('ironlog_session_prs');
+          if (prsStr) prsHit = JSON.parse(prsStr).length;
+
+          const { shareWorkout } = require('../lib/feed');
+          await shareWorkout({
+            workout_name: workout.name,
+            muscle_groups: workout.muscle_groups,
+            duration_minutes: workout.duration_minutes,
+            total_volume_kg: workout.total_volume_kg,
+            exercise_count: new Set(workout.exercises.map(e => e.exercise_name)).size,
+            prs_hit: prsHit,
+            caption: completionCaption.trim()
+          });
+        } catch (feedErr: any) {
+          // The workout itself is saved; only the feed post failed
+          console.error('Failed to share workout to feed:', feedErr);
+          Alert.alert('Saved, but not shared', feedErr?.message || 'Could not post to the feed.');
+        }
+      }
+
+      try {
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } catch (_) {}
+
+      setShowCompletionModal(false);
+      setCompletionCaption('');
+      router.replace('/(tabs)');
     } catch (err) {
       console.error('Failed to save workout:', err);
+      isSavingRef.current = false;
       if (Platform.OS === 'web') {
-        window.alert('Failed to save workout. Please try again.');
+        window.alert('Failed to save workout. Your sets are still here — please try again.');
       } else {
-        Alert.alert('Error', 'Failed to save workout. Please try again.');
+        Alert.alert('Error', 'Failed to save workout. Your sets are still here — please try again.');
       }
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -237,9 +261,27 @@ export default function WorkoutActiveScreen() {
   };
 
   const handleSetComplete = (exerciseIdx: number, setIdx: number) => {
+    const exercise = exercises[exerciseIdx];
+    const set = exercise?.sets[setIdx];
+    if (!set) return;
+
+    if (!set.completed) {
+      // The grey placeholder shows last session's numbers — use them if left blank
+      const prev = exercise.previousSets?.filter(s => !s.is_warmup)[setIdx];
+      const fill: { weight_kg?: number; reps?: number } = {};
+      if (set.weight_kg === 0 && prev?.weight_kg) fill.weight_kg = prev.weight_kg;
+      if (set.reps === 0 && prev?.reps) fill.reps = prev.reps;
+      if ((fill.reps ?? set.reps) === 0) {
+        Alert.alert('Enter reps', 'Add how many reps you did before completing the set.');
+        return;
+      }
+      if (fill.weight_kg !== undefined || fill.reps !== undefined) {
+        updateSet(exerciseIdx, setIdx, fill);
+      }
+    }
+
     toggleSetComplete(exerciseIdx, setIdx);
-    const set = exercises[exerciseIdx]?.sets[setIdx];
-    if (set && !set.completed) {
+    if (!set.completed) {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       startRestTimer();
     }
@@ -331,20 +373,32 @@ export default function WorkoutActiveScreen() {
   const openPlateCalculator = (exIdx: number, setIdx: number, currentWeight: number) => {
     setActivePlateExIdx(exIdx);
     setActivePlateSetIdx(setIdx);
-    setPlateTargetWeight(currentWeight > 0 ? currentWeight.toString() : '45');
+    setPlateTargetWeight(currentWeight > 0 ? toDisplayWeight(currentWeight).toString() : String(barWeight));
     setShowPlateCalc(true);
   };
 
   // Barbell Plates calculation logic
-  const AVAILABLE_PLATES = [
-    { weight: 25, color: '#DC2626', label: '25' },
-    { weight: 20, color: '#2563EB', label: '20' },
-    { weight: 15, color: '#EAB308', label: '15' },
-    { weight: 10, color: '#16A34A', label: '10' },
-    { weight: 5, color: '#F3F4F6', textColor: '#1F2937', label: '5' },
-    { weight: 2.5, color: '#4B5563', label: '2.5' },
-    { weight: 1.25, color: '#9333EA', label: '1.25' }
-  ];
+  // Plate sets in the user's unit; height/width drive the barbell drawing
+  const AVAILABLE_PLATES = unit === 'lbs'
+    ? [
+        { weight: 45, color: '#2563EB', label: '45', height: 120, width: 18 },
+        { weight: 35, color: '#EAB308', label: '35', height: 110, width: 18 },
+        { weight: 25, color: '#16A34A', label: '25', height: 100, width: 16 },
+        { weight: 10, color: '#F3F4F6', label: '10', height: 80, width: 12 },
+        { weight: 5, color: '#4B5563', label: '5', height: 65, width: 10 },
+        { weight: 2.5, color: '#9333EA', label: '2.5', height: 50, width: 8 },
+      ]
+    : [
+        { weight: 25, color: '#DC2626', label: '25', height: 120, width: 18 },
+        { weight: 20, color: '#2563EB', label: '20', height: 110, width: 18 },
+        { weight: 15, color: '#EAB308', label: '15', height: 100, width: 18 },
+        { weight: 10, color: '#16A34A', label: '10', height: 90, width: 15 },
+        { weight: 5, color: '#F3F4F6', label: '5', height: 75, width: 12 },
+        { weight: 2.5, color: '#4B5563', label: '2.5', height: 60, width: 10 },
+        { weight: 1.25, color: '#9333EA', label: '1.25', height: 45, width: 8 },
+      ];
+  const BAR_OPTIONS = unit === 'lbs' ? [15, 25, 35, 45] : [10, 15, 20, 25];
+  const PLATE_STEPS = unit === 'lbs' ? [-10, -5, 5, 10, 45] : [-10, -2.5, 2.5, 10, 20];
 
   const calculatedPlatesList = React.useMemo(() => {
     const target = parseFloat(plateTargetWeight) || 0;
@@ -360,12 +414,12 @@ export default function WorkoutActiveScreen() {
       }
     }
     return result;
-  }, [plateTargetWeight, barWeight]);
+  }, [plateTargetWeight, barWeight, unit]);
 
   const handleApplyPlateWeight = () => {
     if (activePlateExIdx !== null && activePlateSetIdx !== null) {
       const weight = parseFloat(plateTargetWeight) || 0;
-      updateSet(activePlateExIdx, activePlateSetIdx, { weight_kg: weight });
+      updateSet(activePlateExIdx, activePlateSetIdx, { weight_kg: fromDisplayWeight(weight) });
       setShowPlateCalc(false);
       try {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -374,7 +428,7 @@ export default function WorkoutActiveScreen() {
   };
 
   useEffect(() => {
-    if (!isActive) {
+    if (!isActive && !isSavingRef.current) {
       if (router.canGoBack()) {
         router.back();
       } else {
@@ -491,14 +545,14 @@ export default function WorkoutActiveScreen() {
 
               {exercise.previousSets && exercise.previousSets.length > 0 && (
                 <Text style={styles.previousHint}>
-                  Last: {exercise.previousSets.filter(s => !s.is_warmup)[0]?.weight_kg || 0}kg × {exercise.previousSets.filter(s => !s.is_warmup)[0]?.reps || 0} reps
+                  Last: {displayWeight(exercise.previousSets.filter(s => !s.is_warmup)[0]?.weight_kg || 0)} × {exercise.previousSets.filter(s => !s.is_warmup)[0]?.reps || 0} reps
                 </Text>
               )}
 
               {/* Set Header */}
               <View style={styles.setHeader}>
                 <Text style={[styles.setHeaderText, { width: 32 }]}>SET</Text>
-                <Text style={[styles.setHeaderText, { flex: 1, textAlign: 'center' }]}>KG</Text>
+                <Text style={[styles.setHeaderText, { flex: 1, textAlign: 'center' }]}>{unit.toUpperCase()}</Text>
                 <Text style={[styles.setHeaderText, { flex: 1, textAlign: 'center' }]}>REPS</Text>
                 <Text style={[styles.setHeaderText, { width: 42, textAlign: 'center' }]}>RPE</Text>
                 <Text style={[styles.setHeaderText, { width: 40, textAlign: 'center' }]}>✓</Text>
@@ -516,13 +570,15 @@ export default function WorkoutActiveScreen() {
                     </Text>
                     
                     <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', marginHorizontal: 4, position: 'relative' }}>
-                      <TextInput
+                      <NumericInput
                         style={[styles.setInput, { flex: 1, marginHorizontal: 0 }, !set.completed && { paddingRight: 24 }, set.completed && styles.setInputCompleted]}
-                        value={set.weight_kg > 0 ? set.weight_kg.toString() : ''}
-                        onChangeText={t => updateSet(exIdx, setIdx, { weight_kg: parseFloat(t) || 0 })}
-                        placeholder={exercise.previousSets?.filter(s => !s.is_warmup)[setIdx]?.weight_kg?.toString() || '-'}
+                        value={toDisplayWeight(set.weight_kg)}
+                        onChangeValue={v => updateSet(exIdx, setIdx, { weight_kg: fromDisplayWeight(v) })}
+                        placeholder={(() => {
+                          const prevKg = exercise.previousSets?.filter(s => !s.is_warmup)[setIdx]?.weight_kg;
+                          return prevKg ? toDisplayWeight(prevKg).toString() : '-';
+                        })()}
                         placeholderTextColor={text.tertiary}
-                        keyboardType="numeric"
                         selectTextOnFocus
                         editable={!set.completed}
                       />
@@ -536,13 +592,13 @@ export default function WorkoutActiveScreen() {
                       )}
                     </View>
                     
-                    <TextInput
+                    <NumericInput
                       style={[styles.setInput, set.completed && styles.setInputCompleted]}
-                      value={set.reps > 0 ? set.reps.toString() : ''}
-                      onChangeText={t => updateSet(exIdx, setIdx, { reps: parseInt(t) || 0 })}
+                      value={set.reps}
+                      onChangeValue={v => updateSet(exIdx, setIdx, { reps: Math.round(v) })}
+                      allowDecimal={false}
                       placeholder={exercise.previousSets?.filter(s => !s.is_warmup)[setIdx]?.reps?.toString() || '-'}
                       placeholderTextColor={text.tertiary}
-                      keyboardType="numeric"
                       selectTextOnFocus
                       editable={!set.completed}
                     />
@@ -926,15 +982,15 @@ export default function WorkoutActiveScreen() {
 
           <ScrollView style={{ flex: 1, padding: 16 }} showsVerticalScrollIndicator={false}>
             <Text style={{ color: text.secondary, fontSize: 14, fontWeight: '600', marginBottom: 8, textAlign: 'center' }}>
-              Target Weight (KG)
+              Target Weight ({unit.toUpperCase()})
             </Text>
             <TextInput
               style={[styles.searchInput, { marginHorizontal: 30, paddingHorizontal: 12, marginBottom: 20, textAlign: 'center', fontSize: 24, height: 50, fontWeight: 'bold' }]}
               placeholder="e.g. 82.5"
               placeholderTextColor={text.tertiary}
               value={plateTargetWeight}
-              onChangeText={setPlateTargetWeight}
-              keyboardType="numeric"
+              onChangeText={t => setPlateTargetWeight(t.replace(',', '.').replace(/[^0-9.]/g, ''))}
+              keyboardType="decimal-pad"
               selectTextOnFocus
             />
 
@@ -980,14 +1036,8 @@ export default function WorkoutActiveScreen() {
 
                   {/* Render the plates side-by-side */}
                   {calculatedPlatesList.map((plate, index) => {
-                    let pHeight = 45;
-                    let pWidth = 8;
-                    if (plate.weight === 25) { pHeight = 120; pWidth = 18; }
-                    else if (plate.weight === 20) { pHeight = 110; pWidth = 18; }
-                    else if (plate.weight === 15) { pHeight = 100; pWidth = 18; }
-                    else if (plate.weight === 10) { pHeight = 90; pWidth = 15; }
-                    else if (plate.weight === 5) { pHeight = 75; pWidth = 12; }
-                    else if (plate.weight === 2.5) { pHeight = 60; pWidth = 10; }
+                    const pHeight = plate.height;
+                    const pWidth = plate.width;
 
                     return (
                       <View
@@ -1006,8 +1056,8 @@ export default function WorkoutActiveScreen() {
                         }}
                       >
                         <Text style={{ 
-                          color: plate.weight === 5 ? '#1F2937' : '#FFFFFF', 
-                          fontSize: plate.weight < 5 ? 7 : 9, 
+                          color: plate.color === '#F3F4F6' ? '#1F2937' : '#FFFFFF',
+                          fontSize: plate.width <= 10 ? 7 : 9,
                           fontWeight: 'bold',
                           transform: [{ rotate: '90deg' }]
                         }}>
@@ -1026,7 +1076,7 @@ export default function WorkoutActiveScreen() {
             {/* Barbell Weight Selector */}
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 12 }}>
               <Text style={{ color: text.tertiary, fontSize: 12, fontWeight: 'bold' }}>BAR WEIGHT:</Text>
-              {[10, 15, 20, 25].map(bw => (
+              {BAR_OPTIONS.map(bw => (
                 <TouchableOpacity
                   key={bw}
                   style={{
@@ -1040,7 +1090,7 @@ export default function WorkoutActiveScreen() {
                   onPress={() => setBarWeight(bw)}
                 >
                   <Text style={{ color: barWeight === bw ? '#FFF' : text.secondary, fontSize: 12, fontWeight: 'bold' }}>
-                    {bw}kg
+                    {bw}{unit}
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -1048,20 +1098,14 @@ export default function WorkoutActiveScreen() {
 
             <Text style={{ color: text.secondary, textAlign: 'center', fontSize: 14, marginBottom: 20, fontWeight: '500' }}>
               {parseFloat(plateTargetWeight) <= barWeight ? (
-                `Empty ${barWeight}kg Barbell`
+                `Empty ${barWeight}${unit} Barbell`
               ) : (
-                `${barWeight}kg Bar + ${calculatedPlatesList.map(p => `${p.label}kg`).join(' + ')} on each side`
+                `${barWeight}${unit} Bar + ${calculatedPlatesList.map(p => `${p.label}${unit}`).join(' + ')} on each side`
               )}
             </Text>
 
             <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 24 }}>
-              {[
-                { label: '-10kg', val: -10 },
-                { label: '-2.5kg', val: -2.5 },
-                { label: '+2.5kg', val: 2.5 },
-                { label: '+10kg', val: 10 },
-                { label: '+20kg', val: 20 }
-              ].map(btn => (
+              {PLATE_STEPS.map(val => ({ label: `${val > 0 ? '+' : ''}${val}${unit}`, val })).map(btn => (
                 <TouchableOpacity
                   key={btn.label}
                   style={{
@@ -1074,7 +1118,7 @@ export default function WorkoutActiveScreen() {
                   }}
                   onPress={() => {
                     const current = parseFloat(plateTargetWeight) || 0;
-                    const next = Math.max(20, current + btn.val);
+                    const next = Math.max(barWeight, current + btn.val);
                     setPlateTargetWeight(next.toString());
                   }}
                 >
@@ -1217,8 +1261,13 @@ export default function WorkoutActiveScreen() {
                 marginBottom: 40
               }}
               onPress={onSaveWorkout}
+              disabled={isSaving}
             >
-              <Text style={{ color: '#FFFFFF', fontSize: 16, fontWeight: 'bold' }}>Complete Workout</Text>
+              {isSaving ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={{ color: '#FFFFFF', fontSize: 16, fontWeight: 'bold' }}>Complete Workout</Text>
+              )}
             </TouchableOpacity>
           </ScrollView>
         </View>

@@ -16,14 +16,18 @@ import {
   Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { Dumbbell } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from 'expo-router';
-import { Colors, useThemeColor, Spacing, BorderRadius, FontSize, FontWeight, Shadows } from '../../lib/theme';
+import { Colors, useThemeColor, Spacing, BorderRadius, FontSize, FontWeight, Shadows, Fonts, getMuscleColor } from '../../lib/theme';
 import { useWorkoutStore } from '../../stores/workoutStore';
 import { getTemplates, WorkoutTemplate, getWorkouts, Workout, deleteTemplate, saveTemplate } from '../../lib/storage';
 import { LinearGradient } from 'expo-linear-gradient';
 import Swipeable from 'react-native-gesture-handler/Swipeable';
 import exerciseLibrary from '../../data/exercises.json';
+import { shareRoutine } from '../../lib/social';
+import { parseLocalDate } from '../../lib/date';
+import { displayVolume } from '../../lib/units';
 
 export default function WorkoutTab() {
   const { colors, text, accent, status, muscle } = useThemeColor();
@@ -102,7 +106,8 @@ export default function WorkoutTab() {
       const generated = await generateSmartWorkout(
         aiGoal,
         aiEquipment,
-        parseInt(aiDuration) || 45
+        Math.min(Math.max(parseInt(aiDuration) || 45, 15), 180),
+        exerciseLibrary.exercises.map((e: any) => e.name)
       );
 
       await saveTemplate({
@@ -168,6 +173,31 @@ export default function WorkoutTab() {
     );
   };
 
+  const handleShareTemplate = (template: WorkoutTemplate) => {
+    Alert.alert(
+      'Share Routine',
+      `Share "${template.name}" with your friends? They'll be able to copy it to their templates.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Share',
+          onPress: async () => {
+            try {
+              await shareRoutine({
+                name: template.name,
+                description: template.muscle_groups.join(', '),
+                exercises: template.exercises,
+              });
+              Alert.alert('Shared', `Your friends can now find "${template.name}" on your profile card.`);
+            } catch (e: any) {
+              Alert.alert('Could not share', e?.message || 'Please try again.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const filteredTemplates = searchQuery
     ? templates.filter(t =>
         t.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -175,19 +205,6 @@ export default function WorkoutTab() {
       )
     : templates;
 
-  const muscleGroupIcons: Record<string, string> = {
-    chest: '💪',
-    back: '🔙',
-    shoulders: '🏋️',
-    quadriceps: '🦵',
-    hamstrings: '🦵',
-    glutes: '🍑',
-    biceps: '💪',
-    triceps: '💪',
-    core: '🎯',
-    arms: '💪',
-    calves: '🦶',
-  };
 
   return (
     <View style={styles.container}>
@@ -295,10 +312,8 @@ export default function WorkoutTab() {
               onPress={() => handleStartTemplate(template)}
               activeOpacity={0.8}
             >
-              <View style={styles.templateIcon}>
-                <Text style={styles.templateEmoji}>
-                  {muscleGroupIcons[template.muscle_groups[0]] || '⚡'}
-                </Text>
+              <View style={[styles.templateIcon, { backgroundColor: `${getMuscleColor(template.muscle_groups[0])}1F` }]}>
+                <Dumbbell size={20} color={getMuscleColor(template.muscle_groups[0])} />
               </View>
               <View style={styles.templateInfo}>
                 <Text style={styles.templateName}>{template.name}</Text>
@@ -321,20 +336,36 @@ export default function WorkoutTab() {
             <Swipeable
               key={template.id}
               renderRightActions={() => (
-                <TouchableOpacity
-                  style={{
-                    backgroundColor: accent.red,
-                    justifyContent: 'center',
-                    alignItems: 'center',
-                    width: 70,
-                    borderRadius: BorderRadius.lg,
-                    marginBottom: Spacing.sm,
-                    marginLeft: Spacing.sm,
-                  }}
-                  onPress={() => handleDeleteTemplate(template.id)}
-                >
-                  <Ionicons name="trash" size={22} color="#fff" />
-                </TouchableOpacity>
+                <View style={{ flexDirection: 'row' }}>
+                  <TouchableOpacity
+                    style={{
+                      backgroundColor: status.info,
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                      width: 70,
+                      borderRadius: BorderRadius.lg,
+                      marginBottom: Spacing.sm,
+                      marginLeft: Spacing.sm,
+                    }}
+                    onPress={() => handleShareTemplate(template)}
+                  >
+                    <Ionicons name="share-social" size={22} color="#fff" />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={{
+                      backgroundColor: accent.red,
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                      width: 70,
+                      borderRadius: BorderRadius.lg,
+                      marginBottom: Spacing.sm,
+                      marginLeft: Spacing.sm,
+                    }}
+                    onPress={() => handleDeleteTemplate(template.id)}
+                  >
+                    <Ionicons name="trash" size={22} color="#fff" />
+                  </TouchableOpacity>
+                </View>
               )}
               containerStyle={{ marginBottom: Spacing.sm }}
             >
@@ -357,10 +388,10 @@ export default function WorkoutTab() {
                 <View style={styles.recentInfo}>
                   <Text style={styles.recentName}>{workout.name}</Text>
                   <Text style={styles.recentMeta}>
-                    {new Date(workout.workout_date).toLocaleDateString('en-IN', {
+                    {parseLocalDate(workout.workout_date).toLocaleDateString('en-IN', {
                       month: 'short',
                       day: 'numeric',
-                    })} • {workout.duration_minutes}min • {workout.total_volume_kg}kg
+                    })} • {workout.duration_minutes}min • {displayVolume(workout.total_volume_kg)}
                   </Text>
                 </View>
                 <Ionicons name="refresh-outline" size={22} color={text.tertiary} />
@@ -749,9 +780,12 @@ const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any
   },
   title: {
     color: text.primary,
-    fontSize: FontSize['3xl'],
-    fontWeight: FontWeight.extrabold,
     marginBottom: Spacing['2xl'],
+    fontFamily: Fonts.displayHeavy,
+    fontSize: 40,
+    lineHeight: 44,
+    textTransform: 'uppercase',
+    letterSpacing: 0.2,
   },
 
   // Continue card
@@ -833,11 +867,11 @@ const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any
   // Section
   sectionTitle: {
     color: text.secondary,
-    fontSize: FontSize.sm,
-    fontWeight: FontWeight.bold,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
     marginBottom: Spacing.md,
+    fontFamily: Fonts.display,
+    fontSize: 18,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
   },
 
   // Template card
@@ -859,17 +893,16 @@ const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any
     alignItems: 'center',
     justifyContent: 'center',
   },
-  templateEmoji: {
-    fontSize: 22,
-  },
   templateInfo: {
     flex: 1,
     marginLeft: Spacing.md,
   },
   templateName: {
     color: text.primary,
-    fontSize: FontSize.md,
-    fontWeight: FontWeight.bold,
+    fontFamily: Fonts.display,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+    fontSize: 20,
   },
   templateMuscles: {
     color: text.secondary,
@@ -898,8 +931,10 @@ const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any
   },
   recentName: {
     color: text.primary,
-    fontSize: FontSize.md,
-    fontWeight: FontWeight.semibold,
+    fontFamily: Fonts.display,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+    fontSize: 18,
   },
   recentMeta: {
     color: text.tertiary,

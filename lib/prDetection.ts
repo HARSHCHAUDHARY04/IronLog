@@ -18,6 +18,8 @@ export interface PersonalRecord {
 
 export interface PRCheckResult {
   is_pr: boolean;
+  /** First record for this metric: save it so future sessions have something to beat, but don't celebrate */
+  is_baseline?: boolean;
   record_type: '1rm' | 'volume' | 'reps';
   new_value: number;
   previous_value: number | null;
@@ -63,8 +65,18 @@ export function checkForPRs(
   }
 
   // Check Volume PR (total volume for this exercise in the session)
-  const currentVolume = calculateVolume(currentSets);
-  if (currentVolume > historicalPRs.volume && historicalPRs.volume > 0) {
+  const currentVolume = calculateVolume(workingSets);
+  if (historicalPRs.volume === 0 && currentVolume > 0) {
+    prs.push({
+      is_pr: false,
+      is_baseline: true,
+      record_type: 'volume',
+      new_value: Math.round(currentVolume),
+      previous_value: null,
+      improvement_pct: null,
+      exercise_name: exerciseName,
+    });
+  } else if (currentVolume > historicalPRs.volume) {
     const improvement = ((currentVolume - historicalPRs.volume) / historicalPRs.volume) * 100;
     prs.push({
       is_pr: true,
@@ -81,7 +93,17 @@ export function checkForPRs(
   const repsAtHeaviest = Math.max(
     ...workingSets.filter(s => s.weight_kg === heaviestWeight).map(s => s.reps)
   );
-  if (repsAtHeaviest > historicalPRs.maxReps && historicalPRs.maxReps > 0) {
+  if (historicalPRs.maxReps === 0) {
+    prs.push({
+      is_pr: false,
+      is_baseline: true,
+      record_type: 'reps',
+      new_value: repsAtHeaviest,
+      previous_value: null,
+      improvement_pct: null,
+      exercise_name: exerciseName,
+    });
+  } else if (repsAtHeaviest > historicalPRs.maxReps) {
     prs.push({
       is_pr: true,
       record_type: 'reps',

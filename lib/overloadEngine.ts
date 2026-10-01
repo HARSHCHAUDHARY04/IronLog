@@ -129,7 +129,7 @@ export function analyzeOverload(sessions: SessionData[]): OverloadAnalysis {
     // ✅ Progressing
     status = 'progressing';
     recommendation = 'weight_up';
-    suggestedWeight = Math.ceil((recentSessions[0].sets.find(s => !s.is_warmup)?.weight_kg || 0) + 2.5);
+    suggestedWeight = Math.round(((recentSessions[0].sets.find(s => !s.is_warmup)?.weight_kg || 0) + 2.5) / 2.5) * 2.5;
     details = `Great progress! Your estimated 1RM increased by ${(changePercent * 100).toFixed(1)}% over the last ${ROLLING_WINDOW} sessions. Consider adding 2.5kg.`;
 
   } else if (changePercent < REGRESSION_THRESHOLD) {

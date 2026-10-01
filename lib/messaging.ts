@@ -4,7 +4,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase, isSupabaseConfigured } from './supabase';
-import { getUser } from './storage';
+import { getLocalUser, generateId } from './storage';
 
 const CHATS_KEY = 'nextrep_chats';
 
@@ -17,40 +17,42 @@ export interface ChatMessage {
   read_at?: string | null;
 }
 
+const MAX_MESSAGE_LENGTH = 2000;
+
 /**
- * Send a message to a friend
+ * Send a message to a friend. Throws if the server rejects it, so the UI
+ * can tell the user instead of showing a message that was never delivered.
  */
 export async function sendMessage(friendId: string, text: string): Promise<ChatMessage> {
-  const currentUser = await getUser();
-  const messageId = Math.random().toString(36).substring(2) + Date.now().toString(36);
-  
+  const currentUser = await getLocalUser();
+  const trimmed = text.trim().slice(0, MAX_MESSAGE_LENGTH);
+  if (!trimmed) throw new Error('Message is empty');
+
   const newMessage: ChatMessage = {
-    id: messageId,
-    text,
+    id: generateId(),
+    text: trimmed,
     sender: 'me',
     sender_id: currentUser?.id,
     timestamp: new Date().toISOString(),
   };
 
-  // Always save locally first (optimistic)
-  const chats = await getLocalChats();
-  if (!chats[friendId]) chats[friendId] = [];
-  chats[friendId].push(newMessage);
-  await AsyncStorage.setItem(CHATS_KEY, JSON.stringify(chats));
-
-  // Try Supabase if configured
   if (isSupabaseConfigured && currentUser?.id) {
-    try {
-      await supabase.from('messages').insert({
-        id: messageId,
-        sender_id: currentUser.id,
-        receiver_id: friendId,
-        text,
-      });
-    } catch (e) {
-      console.error('Supabase sendMessage failed:', e);
+    const { error } = await supabase.from('messages').insert({
+      id: newMessage.id,
+      sender_id: currentUser.id,
+      receiver_id: friendId,
+      text: trimmed,
+    });
+    if (error) {
+      throw new Error(error.code === '42501'
+        ? 'You can only message accepted friends.'
+        : `Message not sent: ${error.message}`);
     }
   }
+
+  const chats = await getLocalChats();
+  chats[friendId] = [...(chats[friendId] || []), newMessage];
+  await AsyncStorage.setItem(CHATS_KEY, JSON.stringify(chats));
 
   return newMessage;
 }
@@ -59,7 +61,7 @@ export async function sendMessage(friendId: string, text: string): Promise<ChatM
  * Get all messages for a conversation with a friend
  */
 export async function getMessages(friendId: string): Promise<ChatMessage[]> {
-  const currentUser = await getUser();
+  const currentUser = await getLocalUser();
 
   if (isSupabaseConfigured && currentUser?.id) {
     try {
@@ -67,8 +69,10 @@ export async function getMessages(friendId: string): Promise<ChatMessage[]> {
         .from('messages')
         .select('*')
         .or(`and(sender_id.eq.${currentUser.id},receiver_id.eq.${friendId}),and(sender_id.eq.${friendId},receiver_id.eq.${currentUser.id})`)
-        .order('created_at', { ascending: true });
+        .order('created_at', { ascending: true })
+        .limit(500);
 
+      if (error) console.error('Supabase getMessages failed:', error);
       if (!error && data) {
         const messages: ChatMessage[] = data.map((m: any) => ({
           id: m.id,
@@ -79,7 +83,6 @@ export async function getMessages(friendId: string): Promise<ChatMessage[]> {
           read_at: m.read_at,
         }));
 
-        // Also update local cache
         const chats = await getLocalChats();
         chats[friendId] = messages;
         await AsyncStorage.setItem(CHATS_KEY, JSON.stringify(chats));
@@ -91,7 +94,6 @@ export async function getMessages(friendId: string): Promise<ChatMessage[]> {
     }
   }
 
-  // Fallback to local
   const chats = await getLocalChats();
   return chats[friendId] || [];
 }
@@ -106,7 +108,7 @@ export function subscribeToMessages(
   onNewMessage: (msg: ChatMessage) => void
 ): () => void {
   if (!isSupabaseConfigured) {
-    return () => {}; // No-op if not configured
+    return () => {};
   }
 
   const channel = supabase
@@ -141,19 +143,30 @@ export function subscribeToMessages(
 }
 
 /**
+ * Mark every unread message from a friend as read
+ */
+export async function markConversationRead(friendId: string): Promise<void> {
+  const currentUser = await getLocalUser();
+  if (!isSupabaseConfigured || !currentUser?.id) return;
+  const { error } = await supabase
+    .from('messages')
+    .update({ read_at: new Date().toISOString() })
+    .eq('sender_id', friendId)
+    .eq('receiver_id', currentUser.id)
+    .is('read_at', null);
+  if (error) console.error('markConversationRead failed:', error);
+}
+
+/**
  * Mark a message as read
  */
 export async function markAsRead(messageId: string): Promise<void> {
-  if (isSupabaseConfigured) {
-    try {
-      await supabase
-        .from('messages')
-        .update({ read_at: new Date().toISOString() })
-        .eq('id', messageId);
-    } catch (e) {
-      console.error('markAsRead failed:', e);
-    }
-  }
+  if (!isSupabaseConfigured) return;
+  const { error } = await supabase
+    .from('messages')
+    .update({ read_at: new Date().toISOString() })
+    .eq('id', messageId);
+  if (error) console.error('markAsRead failed:', error);
 }
 
 /**
