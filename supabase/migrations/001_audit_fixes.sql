@@ -5,6 +5,130 @@
 -- ═══════════════════════════════════════════════════════
 
 -- ───────────────────────────────────────────────────────
+-- 0. Social tables from schema.sql sections 2-7, in case an older
+--    version of the schema was applied without them
+-- ───────────────────────────────────────────────────────
+
+-- Older profiles tables may predate the gamification columns
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS username TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS avatar_url TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS xp INTEGER DEFAULT 0;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS level INTEGER DEFAULT 1;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS current_streak INTEGER DEFAULT 0;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS highest_streak INTEGER DEFAULT 0;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS total_workouts INTEGER DEFAULT 0;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS badges TEXT[] DEFAULT '{}';
+
+CREATE TABLE IF NOT EXISTS public.friends (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id_1 UUID REFERENCES public.profiles(id) NOT NULL,
+    user_id_2 UUID REFERENCES public.profiles(id) NOT NULL,
+    status TEXT CHECK (status IN ('pending', 'accepted')) DEFAULT 'pending',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS unique_friendship_relation ON public.friends (
+    LEAST(user_id_1, user_id_2),
+    GREATEST(user_id_1, user_id_2)
+);
+ALTER TABLE public.friends ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Users can view their friendships." ON public.friends;
+CREATE POLICY "Users can view their friendships."
+ON public.friends FOR SELECT USING (auth.uid() = user_id_1 OR auth.uid() = user_id_2);
+DROP POLICY IF EXISTS "Users can create friend requests." ON public.friends;
+CREATE POLICY "Users can create friend requests."
+ON public.friends FOR INSERT WITH CHECK (auth.uid() = user_id_1);
+DROP POLICY IF EXISTS "Users can accept their friend requests." ON public.friends;
+CREATE POLICY "Users can accept their friend requests."
+ON public.friends FOR UPDATE USING (auth.uid() = user_id_2);
+DROP POLICY IF EXISTS "Users can remove their friendships." ON public.friends;
+CREATE POLICY "Users can remove their friendships."
+ON public.friends FOR DELETE USING (auth.uid() = user_id_1 OR auth.uid() = user_id_2);
+
+CREATE TABLE IF NOT EXISTS public.shared_routines (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    creator_id UUID REFERENCES public.profiles(id) NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT,
+    exercises JSONB NOT NULL,
+    downloads INTEGER DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+ALTER TABLE public.shared_routines ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Routines are viewable by everyone." ON public.shared_routines;
+CREATE POLICY "Routines are viewable by everyone."
+ON public.shared_routines FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Users can share their own routines." ON public.shared_routines;
+CREATE POLICY "Users can share their own routines."
+ON public.shared_routines FOR INSERT WITH CHECK (auth.uid() = creator_id);
+
+CREATE TABLE IF NOT EXISTS public.messages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    sender_id UUID REFERENCES public.profiles(id) NOT NULL,
+    receiver_id UUID REFERENCES public.profiles(id) NOT NULL,
+    text TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    read_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_messages_conversation ON public.messages (
+    LEAST(sender_id, receiver_id),
+    GREATEST(sender_id, receiver_id),
+    created_at DESC
+);
+ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Users can view their messages." ON public.messages;
+CREATE POLICY "Users can view their messages."
+ON public.messages FOR SELECT USING (auth.uid() = sender_id OR auth.uid() = receiver_id);
+DROP POLICY IF EXISTS "Users can update their received messages (mark read)." ON public.messages;
+CREATE POLICY "Users can update their received messages (mark read)."
+ON public.messages FOR UPDATE USING (auth.uid() = receiver_id);
+
+-- Realtime for live chat (errors if already added, so guard it)
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime')
+     AND NOT EXISTS (
+       SELECT 1 FROM pg_publication_tables
+       WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'messages'
+     ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.messages;
+  END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS public.workout_posts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES public.profiles(id) NOT NULL,
+    workout_name TEXT NOT NULL,
+    muscle_groups TEXT[] DEFAULT '{}',
+    duration_minutes INTEGER DEFAULT 0,
+    total_volume_kg NUMERIC DEFAULT 0,
+    exercise_count INTEGER DEFAULT 0,
+    prs_hit INTEGER DEFAULT 0,
+    caption TEXT DEFAULT '',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_workout_posts_user ON public.workout_posts (user_id, created_at DESC);
+ALTER TABLE public.workout_posts ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Users can create their own posts." ON public.workout_posts;
+CREATE POLICY "Users can create their own posts."
+ON public.workout_posts FOR INSERT WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can delete their own posts." ON public.workout_posts;
+CREATE POLICY "Users can delete their own posts."
+ON public.workout_posts FOR DELETE USING (auth.uid() = user_id);
+
+CREATE TABLE IF NOT EXISTS public.post_reactions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    post_id UUID REFERENCES public.workout_posts(id) ON DELETE CASCADE NOT NULL,
+    user_id UUID REFERENCES public.profiles(id) NOT NULL,
+    reaction TEXT NOT NULL CHECK (reaction IN ('fire', 'muscle', 'fist')),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(post_id, user_id)
+);
+ALTER TABLE public.post_reactions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Users can remove their reactions." ON public.post_reactions;
+CREATE POLICY "Users can remove their reactions."
+ON public.post_reactions FOR DELETE USING (auth.uid() = user_id);
+
+-- ───────────────────────────────────────────────────────
 -- Helpers
 -- ───────────────────────────────────────────────────────
 
