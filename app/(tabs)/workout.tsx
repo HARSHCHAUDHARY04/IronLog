@@ -24,6 +24,9 @@ import { getTemplates, WorkoutTemplate, getWorkouts, Workout, deleteTemplate, sa
 import { LinearGradient } from 'expo-linear-gradient';
 import Swipeable from 'react-native-gesture-handler/Swipeable';
 import exerciseLibrary from '../../data/exercises.json';
+import { shareRoutine } from '../../lib/social';
+import { parseLocalDate } from '../../lib/date';
+import { displayVolume } from '../../lib/units';
 
 export default function WorkoutTab() {
   const { colors, text, accent, status, muscle } = useThemeColor();
@@ -102,7 +105,8 @@ export default function WorkoutTab() {
       const generated = await generateSmartWorkout(
         aiGoal,
         aiEquipment,
-        parseInt(aiDuration) || 45
+        Math.min(Math.max(parseInt(aiDuration) || 45, 15), 180),
+        exerciseLibrary.exercises.map((e: any) => e.name)
       );
 
       await saveTemplate({
@@ -164,6 +168,31 @@ export default function WorkoutTab() {
             await loadData();
           } 
         }
+      ]
+    );
+  };
+
+  const handleShareTemplate = (template: WorkoutTemplate) => {
+    Alert.alert(
+      'Share Routine',
+      `Share "${template.name}" with your friends? They'll be able to copy it to their templates.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Share',
+          onPress: async () => {
+            try {
+              await shareRoutine({
+                name: template.name,
+                description: template.muscle_groups.join(', '),
+                exercises: template.exercises,
+              });
+              Alert.alert('Shared', `Your friends can now find "${template.name}" on your profile card.`);
+            } catch (e: any) {
+              Alert.alert('Could not share', e?.message || 'Please try again.');
+            }
+          },
+        },
       ]
     );
   };
@@ -321,20 +350,36 @@ export default function WorkoutTab() {
             <Swipeable
               key={template.id}
               renderRightActions={() => (
-                <TouchableOpacity
-                  style={{
-                    backgroundColor: accent.red,
-                    justifyContent: 'center',
-                    alignItems: 'center',
-                    width: 70,
-                    borderRadius: BorderRadius.lg,
-                    marginBottom: Spacing.sm,
-                    marginLeft: Spacing.sm,
-                  }}
-                  onPress={() => handleDeleteTemplate(template.id)}
-                >
-                  <Ionicons name="trash" size={22} color="#fff" />
-                </TouchableOpacity>
+                <View style={{ flexDirection: 'row' }}>
+                  <TouchableOpacity
+                    style={{
+                      backgroundColor: status.info,
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                      width: 70,
+                      borderRadius: BorderRadius.lg,
+                      marginBottom: Spacing.sm,
+                      marginLeft: Spacing.sm,
+                    }}
+                    onPress={() => handleShareTemplate(template)}
+                  >
+                    <Ionicons name="share-social" size={22} color="#fff" />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={{
+                      backgroundColor: accent.red,
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                      width: 70,
+                      borderRadius: BorderRadius.lg,
+                      marginBottom: Spacing.sm,
+                      marginLeft: Spacing.sm,
+                    }}
+                    onPress={() => handleDeleteTemplate(template.id)}
+                  >
+                    <Ionicons name="trash" size={22} color="#fff" />
+                  </TouchableOpacity>
+                </View>
               )}
               containerStyle={{ marginBottom: Spacing.sm }}
             >
@@ -357,10 +402,10 @@ export default function WorkoutTab() {
                 <View style={styles.recentInfo}>
                   <Text style={styles.recentName}>{workout.name}</Text>
                   <Text style={styles.recentMeta}>
-                    {new Date(workout.workout_date).toLocaleDateString('en-IN', {
+                    {parseLocalDate(workout.workout_date).toLocaleDateString('en-IN', {
                       month: 'short',
                       day: 'numeric',
-                    })} • {workout.duration_minutes}min • {workout.total_volume_kg}kg
+                    })} • {workout.duration_minutes}min • {displayVolume(workout.total_volume_kg)}
                   </Text>
                 </View>
                 <Ionicons name="refresh-outline" size={22} color={text.tertiary} />

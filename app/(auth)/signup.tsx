@@ -34,27 +34,44 @@ export default function SignupScreen() {
 
   const handleGoogleSignup = async () => {
     setIsLoading(true);
-    const success = await signInWithGoogle();
+    const result = await signInWithGoogle();
     setIsLoading(false);
-    if (success) {
-      router.replace('/(auth)/onboarding');
+    if (result.ok) {
+      // Root index sends new accounts to onboarding and existing ones to the app
+      router.replace('/');
+    } else if (!result.error.includes('cancelled')) {
+      Alert.alert('Google Sign-In Failed', result.error);
     }
   };
 
   const handleSignup = async () => {
-    if (!name || !email || !password) {
+    if (!name.trim() || !email.trim() || !password) {
       Alert.alert('Error', 'Please fill in all fields');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      Alert.alert('Error', 'Please enter a valid email address');
+      return;
+    }
+    if (password.length < 8) {
+      Alert.alert('Error', 'Password must be at least 8 characters');
       return;
     }
 
     setIsLoading(true);
-    const success = await signup(email, password, name);
+    const result = await signup(email.trim().toLowerCase(), password, name.trim());
     setIsLoading(false);
 
-    if (success) {
-      router.replace('/(auth)/onboarding');
+    if (!result.ok) {
+      Alert.alert('Could Not Create Account', result.error);
+    } else if (result.needsEmailConfirmation) {
+      Alert.alert(
+        'Confirm Your Email',
+        `We sent a confirmation link to ${email.trim()}. Open it, then sign in.`,
+        [{ text: 'OK', onPress: () => router.replace('/(auth)/login') }]
+      );
     } else {
-      Alert.alert('Error', 'Could not create account');
+      router.replace('/(auth)/onboarding');
     }
   };
 

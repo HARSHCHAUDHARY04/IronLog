@@ -23,6 +23,7 @@ import { useThemeColor, Spacing, BorderRadius, FontSize, FontWeight, Shadows } f
 import { getWorkouts, getWorkoutDatesForMonth, Workout, deleteWorkout } from '../../lib/storage';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { displayWeight } from '../../lib/units';
+import { parseLocalDate } from '../../lib/date';
 import { LinearGradient } from 'expo-linear-gradient';
 
 export default function HistoryScreen() {
@@ -79,15 +80,11 @@ export default function HistoryScreen() {
   const monthName = calendarMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
   const prevMonth = () => {
-    const d = new Date(calendarMonth);
-    d.setMonth(d.getMonth() - 1);
-    setCalendarMonth(d);
+    setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1));
   };
 
   const nextMonth = () => {
-    const d = new Date(calendarMonth);
-    d.setMonth(d.getMonth() + 1);
-    setCalendarMonth(d);
+    setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1));
   };
 
   const isWorkoutDay = (day: number) => {
@@ -248,10 +245,10 @@ export default function HistoryScreen() {
                   <View style={styles.workoutHeader}>
                     <View style={styles.workoutDateBadge}>
                       <Text style={styles.workoutDateDay}>
-                        {new Date(workout.workout_date).getDate()}
+                        {parseLocalDate(workout.workout_date).getDate()}
                       </Text>
                       <Text style={styles.workoutDateMonth}>
-                        {new Date(workout.workout_date).toLocaleDateString('en-US', { month: 'short' })}
+                        {parseLocalDate(workout.workout_date).toLocaleDateString('en-US', { month: 'short' })}
                       </Text>
                     </View>
                     <View style={styles.workoutInfo}>

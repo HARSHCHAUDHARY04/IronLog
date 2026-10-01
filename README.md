@@ -1,6 +1,6 @@
-# IronLog 🏋️‍♂️
+# Next Rep 🏋️‍♂️
 
-IronLog is a comprehensive, modern fitness and workout tracking application built with React Native (Expo). Designed for gym-goers, athletes, and fitness enthusiasts, it provides advanced tools to track workouts, measure progress, and achieve fitness goals through intelligent tracking and analytics.
+Next Rep (formerly IronLog) is a comprehensive, modern fitness and workout tracking application built with React Native (Expo). Designed for gym-goers, athletes, and fitness enthusiasts, it provides advanced tools to track workouts, measure progress, and achieve fitness goals through intelligent tracking and analytics.
 
 ## 🚀 Features
 
@@ -20,7 +20,7 @@ IronLog is a comprehensive, modern fitness and workout tracking application buil
 *   **State Management**: [Zustand](https://github.com/pmndrs/zustand)
 *   **Backend & Database**: [Supabase](https://supabase.com/) (PostgreSQL, Auth)
 *   **Local Storage**: Async Storage
-*   **Styling & UI**: Expo Vector Icons, Bottom Sheet, FlashList
+*   **Styling & UI**: Expo Vector Icons, Lucide icons, Gifted Charts
 *   **Animations**: React Native Reanimated
 
 ## 📂 Project Structure
@@ -57,13 +57,32 @@ IronLog is a comprehensive, modern fitness and workout tracking application buil
     ```env
     EXPO_PUBLIC_SUPABASE_URL=your_supabase_project_url
     EXPO_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+    # Optional, dev builds only — lets AI features work before the Edge Function is deployed.
+    # Never add this to EAS/production env: EXPO_PUBLIC_* values are bundled into the app.
+    EXPO_PUBLIC_GEMINI_API_KEY=your_dev_gemini_key
     ```
 
-4.  **Run the app:**
+4.  **Database:** in the Supabase SQL editor run `supabase/schema.sql`, then every file in
+    `supabase/migrations/` in order.
+
+5.  **AI Edge Function** (keeps the Gemini key on the server):
+    ```bash
+    supabase secrets set GEMINI_API_KEY=your_key
+    supabase functions deploy ai
+    ```
+
+6.  **Run the app:**
     ```bash
     npm start
     ```
     *Press `a` to open on Android emulator, `i` for iOS simulator, or scan the QR code with the Expo Go app on your physical device.*
+
+### Tests
+
+```bash
+npm test          # unit tests (dates, streaks, PR detection, overload engine)
+npm run typecheck
+```
 
 ## 🤝 Contributing
 

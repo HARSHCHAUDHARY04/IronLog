@@ -3,9 +3,27 @@
 // ═══════════════════════════════════════════════════════
 
 import { create } from 'zustand';
-import { User, getUser, saveUser, clearAllData, seedDemoData } from '../lib/storage';
+import {
+  User,
+  getUser,
+  getLocalUser,
+  saveUser,
+  clearAllData,
+  seedDemoData,
+  flushPendingSync,
+  deleteAccount as deleteAccountData,
+  getWorkoutStats,
+} from '../lib/storage';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { cancelAllReminders, cancelRestTimerNotification } from '../lib/notifications';
 import * as Linking from 'expo-linking';
+import * as WebBrowser from 'expo-web-browser';
+
+WebBrowser.maybeCompleteAuthSession();
+
+export type AuthResult =
+  | { ok: true; needsEmailConfirmation?: boolean }
+  | { ok: false; error: string };
 
 interface AuthState {
   user: User | null;
@@ -14,15 +32,49 @@ interface AuthState {
 
   // Actions
   loadUser: () => Promise<void>;
-  login: (email: string, password: string) => Promise<boolean>;
-  signup: (email: string, password: string, name: string) => Promise<boolean>;
-  signInWithGoogle: () => Promise<boolean>;
+  login: (email: string, password: string) => Promise<AuthResult>;
+  signup: (email: string, password: string, name: string) => Promise<AuthResult>;
+  signInWithGoogle: () => Promise<AuthResult>;
   updateProfile: (data: Partial<User>) => Promise<void>;
   completeOnboarding: (data: Partial<User>) => Promise<void>;
+  /** Returns the number of workouts that could not be synced (0 = safe) */
+  pendingBeforeLogout: () => Promise<number>;
   logout: () => Promise<void>;
+  deleteAccount: () => Promise<void>;
   loadDemoData: () => Promise<void>;
   addXP: (amount: number) => Promise<void>;
   checkBadges: () => Promise<void>;
+}
+
+function errorMessage(e: unknown, fallback: string): string {
+  if (e && typeof e === 'object' && 'message' in e && typeof (e as any).message === 'string') {
+    return (e as any).message;
+  }
+  return fallback;
+}
+
+/** After Supabase auth succeeds, load (or create) the app user for that account */
+async function hydrateSessionUser(sbUser: { id: string; email?: string | null; user_metadata?: any }): Promise<User> {
+  const existing = await getUser();
+  if (existing && existing.id === sbUser.id) return existing;
+
+  // First sign-in on this account: create the users row
+  const meta = sbUser.user_metadata || {};
+  const email = sbUser.email || '';
+  const name = meta.full_name || meta.name || email.split('@')[0];
+
+  // Accounts created before the signup trigger existed have no profile row
+  const slug = name.toLowerCase().replace(/[^a-z0-9_]+/g, '_').slice(0, 20);
+  const { error: profileError } = await supabase.from('profiles').insert({
+    id: sbUser.id,
+    username: `${slug}_${sbUser.id.replace(/-/g, '').slice(0, 6)}`,
+    avatar_url: meta.avatar_url || '',
+  });
+  if (profileError && profileError.code !== '23505') {
+    console.warn('Profile row create skipped:', profileError.message);
+  }
+
+  return saveUser({ id: sbUser.id, email, name, onboarding_completed: false });
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
@@ -32,351 +84,166 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   loadUser: async () => {
     try {
-      let localUser = await getUser();
-      
-      // Attempt to retrieve active session user from Supabase client
-      const { data: { user: sbUser } } = await supabase.auth.getUser();
-      
-      if (sbUser) {
-        const email = sbUser.email || localUser?.email || 'google.user@example.com';
-        const name = sbUser.user_metadata?.full_name || sbUser.user_metadata?.name || localUser?.name || email.split('@')[0];
-        
-        let xp = localUser?.xp || 0;
-        let level = localUser?.level || 1;
-        let badges = localUser?.badges || [];
-        let total_workouts = localUser?.total_workouts || 0;
-        let current_streak = localUser?.current_streak || 0;
-        let highest_streak = localUser?.highest_streak || 0;
-
-        try {
-          const { data: profile } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', sbUser.id)
-            .single();
-          
-          if (profile) {
-            xp = profile.xp ?? xp;
-            level = profile.level ?? level;
-            badges = profile.badges ?? badges;
-            total_workouts = profile.total_workouts ?? total_workouts;
-            current_streak = profile.current_streak ?? current_streak;
-            highest_streak = profile.highest_streak ?? highest_streak;
-          }
-        } catch (dbErr) {
-          console.warn('Failed to fetch profile during loadUser:', dbErr);
-        }
-
-        localUser = await saveUser({
-          id: sbUser.id,
-          email,
-          name,
-          xp,
-          level,
-          badges,
-          total_workouts,
-          current_streak,
-          highest_streak,
-          onboarding_completed: localUser?.onboarding_completed ?? false,
-        });
-      }
-
-      set({ user: localUser, isAuthenticated: !!localUser, isLoading: false });
+      // getUser() pulls the profile from Supabase when a session exists and
+      // falls back to the cached copy offline.
+      const user = await getUser();
+      set({ user, isAuthenticated: !!user, isLoading: false });
     } catch (e) {
+      console.error('loadUser failed:', e);
       set({ isLoading: false });
     }
   },
 
-  login: async (email: string, password: string) => {
+  login: async (email, password) => {
+    set({ isLoading: true });
     try {
-      set({ isLoading: true });
-
       if (isSupabaseConfigured) {
-        // Authenticate with live Supabase Auth
-        const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+        if (!data.user) throw new Error('Sign in failed. Please try again.');
 
-        if (authError) throw authError;
-
-        if (authData?.user) {
-          const sbUser = authData.user;
-          const name = sbUser.user_metadata?.full_name || sbUser.user_metadata?.name || email.split('@')[0];
-          
-          let xp = 0;
-          let level = 1;
-          let badges: string[] = [];
-          let total_workouts = 0;
-          let current_streak = 0;
-          let highest_streak = 0;
-
-          // Fetch profile metadata from profiles table
-          try {
-            const { data: profile } = await supabase
-              .from('profiles')
-              .select('*')
-              .eq('id', sbUser.id)
-              .single();
-
-            if (profile) {
-              xp = profile.xp ?? xp;
-              level = profile.level ?? level;
-              badges = profile.badges ?? badges;
-              total_workouts = profile.total_workouts ?? total_workouts;
-              current_streak = profile.current_streak ?? current_streak;
-              highest_streak = profile.highest_streak ?? highest_streak;
-            }
-          } catch (dbErr) {
-            console.warn('Failed to load profile on standard login:', dbErr);
-          }
-
-          const localUser = await saveUser({
-            id: sbUser.id,
-            email,
-            name,
-            xp,
-            level,
-            badges,
-            total_workouts,
-            current_streak,
-            highest_streak,
-            onboarding_completed: true,
-          });
-
-          set({ user: localUser, isAuthenticated: true, isLoading: false });
-          return true;
-        }
+        const user = await hydrateSessionUser(data.user);
+        set({ user, isAuthenticated: true, isLoading: false });
+        return { ok: true };
       }
 
-      // --- MOCK FALLBACK ---
-      const existingUser = await getUser();
-      if (existingUser && existingUser.email === email) {
-        set({ user: existingUser, isAuthenticated: true, isLoading: false });
-        return true;
-      }
-      const user = await saveUser({ email, name: email.split('@')[0] });
+      // Offline/local mode (no Supabase configured): single local account
+      const existingUser = await getLocalUser();
+      const user = existingUser && existingUser.email === email
+        ? existingUser
+        : await saveUser({ email, name: email.split('@')[0] });
       set({ user, isAuthenticated: true, isLoading: false });
-      return true;
+      return { ok: true };
     } catch (e) {
       console.error('Login Error:', e);
       set({ isLoading: false });
-      return false;
+      return { ok: false, error: errorMessage(e, 'Invalid email or password') };
     }
   },
 
-  signup: async (email: string, password: string, name: string) => {
+  signup: async (email, password, name) => {
+    set({ isLoading: true });
     try {
-      set({ isLoading: true });
-
       if (isSupabaseConfigured) {
-        // Create user in live Supabase Auth
-        const { data: authData, error: authError } = await supabase.auth.signUp({
+        const { data, error } = await supabase.auth.signUp({
           email,
           password,
-          options: {
-            data: {
-              full_name: name,
-              username: name.toLowerCase().replace(/\s+/g, '_'),
-            },
-          },
+          options: { data: { full_name: name } },
         });
+        if (error) throw error;
+        if (!data.user) throw new Error('Could not create account');
 
-        if (authError) throw authError;
-
-        if (authData?.user) {
-          const sbUser = authData.user;
-
-          // Locally save user details
-          const localUser = await saveUser({
-            id: sbUser.id,
-            email,
-            name,
-            xp: 0,
-            level: 1,
-            badges: [],
-            onboarding_completed: false,
-          });
-
-          // Seed profile database record (trigger will also trigger, but we upsert to be safe)
-          try {
-            await supabase.from('profiles').upsert({
-              id: sbUser.id,
-              username: name.toLowerCase().replace(/\s+/g, '_'),
-              avatar_url: '',
-              xp: 0,
-              level: 1,
-              badges: [],
-            });
-          } catch (dbErr) {
-            console.warn('Silent fallback on profiles insert during signup:', dbErr);
-          }
-
-          set({ user: localUser, isAuthenticated: true, isLoading: false });
-          return true;
+        // Email confirmation enabled: no session until the link is clicked
+        if (!data.session) {
+          set({ isLoading: false });
+          return { ok: true, needsEmailConfirmation: true };
         }
+
+        const user = await saveUser({
+          id: data.user.id,
+          email,
+          name,
+          onboarding_completed: false,
+        });
+        set({ user, isAuthenticated: true, isLoading: false });
+        return { ok: true };
       }
 
-      // --- MOCK FALLBACK ---
       const user = await saveUser({ email, name, onboarding_completed: false });
       set({ user, isAuthenticated: true, isLoading: false });
-      return true;
+      return { ok: true };
     } catch (e) {
       console.error('Signup Error:', e);
       set({ isLoading: false });
-      return false;
+      return { ok: false, error: errorMessage(e, 'Could not create account') };
     }
   },
 
   signInWithGoogle: async () => {
+    set({ isLoading: true });
     try {
-      set({ isLoading: true });
-      
+      if (!isSupabaseConfigured) throw new Error('Google sign-in requires Supabase to be configured.');
+
       const redirectUrl = Linking.createURL('/');
-      console.log('--- GOOGLE AUTH REDIRECT URL IS: ---', redirectUrl);
-      
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
           redirectTo: redirectUrl,
-          queryParams: {
-            access_type: 'offline',
-            prompt: 'consent',
-          },
+          skipBrowserRedirect: true,
+          queryParams: { access_type: 'offline', prompt: 'consent' },
         },
       });
-
       if (error) throw error;
-      
-      console.log('--- OAUTH DATA URL IS: ---', data?.url);
+      if (!data?.url) throw new Error('Could not start Google sign-in.');
 
-      if (data?.url) {
-        const WebBrowser = require('expo-web-browser');
-        WebBrowser.maybeCompleteAuthSession();
-        const result = await WebBrowser.openAuthSessionAsync(
-          data.url,
-          redirectUrl,
-          { showInRecents: true }
-        );
-        
-        if (result.type === 'success' && result.url) {
-          // Parse access_token and refresh_token from redirect URL
-          const urlStr = result.url;
-          const paramsString = urlStr.split('#')[1] || urlStr.split('?')[1];
-          if (paramsString) {
-            const params = paramsString.split('&').reduce((acc: Record<string, string>, current: string) => {
-              const [key, value] = current.split('=');
-              if (key && value) {
-                acc[key] = decodeURIComponent(value);
-              }
-              return acc;
-            }, {} as Record<string, string>);
-
-            if (params.access_token && params.refresh_token) {
-              const { error: sessionError } = await supabase.auth.setSession({
-                access_token: params.access_token,
-                refresh_token: params.refresh_token,
-              });
-              if (sessionError) {
-                console.error('Failed to set Supabase session:', sessionError);
-              }
-            }
-          }
-
-          // Polling loop to wait for the Supabase session to complete initialization
-          let sbUser = null;
-          for (let i = 0; i < 6; i++) {
-            const { data: userData } = await supabase.auth.getUser();
-            if (userData?.user) {
-              sbUser = userData.user;
-              break;
-            }
-            await new Promise(resolve => setTimeout(resolve, 500));
-          }
-
-          if (!sbUser) {
-            throw new Error('Google Auth succeeded but failed to fetch Supabase user session.');
-          }
-
-          const email = sbUser.email || 'google.user@example.com';
-          const name = sbUser.user_metadata?.full_name || sbUser.user_metadata?.name || email.split('@')[0];
-          
-          // Try to fetch existing profile state from database or AsyncStorage
-          const existingUser = await getUser();
-          const isOnboardingCompleted = existingUser?.onboarding_completed || false;
-          let xp = existingUser?.xp || 0;
-          let level = existingUser?.level || 1;
-          let badges = existingUser?.badges || [];
-
-          try {
-            const { data: profile } = await supabase
-              .from('profiles')
-              .select('*')
-              .eq('id', sbUser.id)
-              .single();
-            
-            if (profile) {
-              xp = profile.xp ?? xp;
-              level = profile.level ?? level;
-              badges = profile.badges ?? badges;
-            }
-          } catch (dbErr) {
-            console.warn('Failed to fetch existing profile from DB:', dbErr);
-          }
-
-          const localUser = await saveUser({
-            id: sbUser.id, // Sync the unique Supabase user ID locally
-            email,
-            name,
-            xp,
-            level,
-            badges,
-            onboarding_completed: isOnboardingCompleted
-          });
-
-          // Sync user profile row back in Supabase database
-          try {
-            await supabase
-              .from('profiles')
-              .upsert({
-                id: sbUser.id,
-                username: name.toLowerCase().replace(/\s+/g, '_'),
-                avatar_url: sbUser.user_metadata?.avatar_url || '',
-                xp,
-                level,
-                badges
-              });
-          } catch (upsertErr) {
-            console.warn('Silent fallback on profiles row upsert:', upsertErr);
-          }
-
-          set({ user: localUser, isAuthenticated: true, isLoading: false });
-          return true;
-        }
+      const result = await WebBrowser.openAuthSessionAsync(data.url, redirectUrl, { showInRecents: true });
+      if (result.type !== 'success' || !result.url) {
+        set({ isLoading: false });
+        return { ok: false, error: 'Google sign-in was cancelled.' };
       }
-      
-      set({ isLoading: false });
-      return false;
+
+      // Tokens come back in the URL fragment (implicit flow)
+      const paramsString = result.url.split('#')[1] || result.url.split('?')[1] || '';
+      const params = Object.fromEntries(
+        paramsString.split('&').filter(Boolean).map(pair => {
+          const [k, v = ''] = pair.split('=');
+          return [k, decodeURIComponent(v)];
+        })
+      );
+      if (params.error_description) throw new Error(params.error_description);
+      if (!params.access_token || !params.refresh_token) {
+        throw new Error('Google sign-in did not return a session.');
+      }
+
+      const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
+        access_token: params.access_token,
+        refresh_token: params.refresh_token,
+      });
+      if (sessionError) throw sessionError;
+      if (!sessionData.user) throw new Error('Could not load your account.');
+
+      const user = await hydrateSessionUser(sessionData.user);
+      set({ user, isAuthenticated: true, isLoading: false });
+      return { ok: true };
     } catch (e) {
       console.error('Google Sign In Error:', e);
       set({ isLoading: false });
-      return false;
+      return { ok: false, error: errorMessage(e, 'Google sign-in failed') };
     }
   },
 
-  updateProfile: async (data: Partial<User>) => {
+  updateProfile: async (data) => {
     const user = await saveUser(data);
     set({ user });
   },
 
-  completeOnboarding: async (data: Partial<User>) => {
+  completeOnboarding: async (data) => {
     const user = await saveUser({ ...data, onboarding_completed: true });
     set({ user });
   },
 
+  pendingBeforeLogout: async () => {
+    try {
+      return await flushPendingSync();
+    } catch {
+      return 1;
+    }
+  },
+
   logout: async () => {
+    // Try one last sync so nothing queued is lost, then sign out and wipe the device
+    try { await flushPendingSync(); } catch {}
+    await cancelAllReminders();
+    await cancelRestTimerNotification();
+    try { await supabase.auth.signOut(); } catch (e) { console.warn('signOut failed:', e); }
     await clearAllData();
-    await supabase.auth.signOut();
+    set({ user: null, isAuthenticated: false });
+  },
+
+  deleteAccount: async () => {
+    await deleteAccountData();
+    await cancelAllReminders();
+    try { await supabase.auth.signOut(); } catch {}
     set({ user: null, isAuthenticated: false });
   },
 
@@ -385,21 +252,18 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     await get().loadUser();
   },
 
-  addXP: async (amount: number) => {
+  addXP: async (amount) => {
     const { user } = get();
     if (!user) return;
-    
     const newXP = user.xp + amount;
-    const newLevel = Math.floor(Math.sqrt(newXP / 100)) + 1;
-    
-    const updatedUser = await saveUser({ xp: newXP, level: newLevel });
+    const updatedUser = await saveUser({ xp: newXP, level: Math.floor(Math.sqrt(newXP / 100)) + 1 });
     set({ user: updatedUser });
   },
 
   checkBadges: async () => {
     const { user } = get();
     if (!user) return;
-    
+
     const newBadges = [...user.badges];
     let newlyEarned = false;
 
@@ -419,14 +283,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (user.total_workouts >= 250) grant('iron_veteran');
 
     // ── Streak Badges ──
-    const streak = user.current_streak || user.highest_streak || 0;
+    const streak = Math.max(user.current_streak || 0, user.highest_streak || 0);
     if (streak >= 7) grant('week_warrior');
     if (streak >= 30) grant('iron_will');
     if (streak >= 100) grant('unstoppable');
 
-    // ── Volume Badges (check from stored workouts) ──
+    // ── Volume Badges ──
     try {
-      const { getWorkoutStats } = require('../lib/storage');
       const stats = await getWorkoutStats();
       if (stats.totalVolume >= 50000) grant('volume_crusher');
       if (stats.totalVolume >= 100000) grant('volume_king');

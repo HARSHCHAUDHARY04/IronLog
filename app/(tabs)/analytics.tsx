@@ -23,6 +23,8 @@ import {
 import { useFocusEffect } from 'expo-router';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { parseLocalDate, toLocalDateStr, addDays } from '../../lib/date';
+import { useUnit, toDisplayWeight, displayWeight } from '../../lib/units';
 import { LineChart, BarChart } from 'react-native-gifted-charts';
 import { useThemeColor, Spacing, BorderRadius, FontSize, FontWeight, Shadows } from '../../lib/theme';
 import { getWorkouts, getExerciseHistory, getPRs, getWorkoutStats, Workout, PRRecord, saveTemplate } from '../../lib/storage';
@@ -37,6 +39,7 @@ export default function AnalyticsScreen() {
   const { colors, text, accent, status, muscle, isDark } = useThemeColor();
   const styles = React.useMemo(() => getStyles(colors, text, accent, status, muscle), [colors, text, accent, status, muscle]);
   const { isPremium, upgradeToPremium } = useSettingsStore();
+  const unit = useUnit();
 
   const [workouts, setWorkouts] = useState<Workout[]>([]);
   const [prs, setPRs] = useState<PRRecord[]>([]);
@@ -200,12 +203,13 @@ export default function AnalyticsScreen() {
       case 'ALL': break;
     }
 
-    const filtered = history.filter(h => new Date(h.workout_date) >= cutoff);
+    const cutoffStr = toLocalDateStr(cutoff);
+    const filtered = history.filter(h => h.workout_date >= cutoffStr);
     const reversedHistory = [...filtered].reverse();
     
     setChartData(reversedHistory.map(h => ({
-      label: new Date(h.workout_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-      value: h.best_1rm,
+      label: parseLocalDate(h.workout_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+      value: toDisplayWeight(h.best_1rm),
     })));
 
     const analysis = analyzeOverload(reversedHistory.map(h => ({
@@ -248,10 +252,8 @@ export default function AnalyticsScreen() {
 
   const calculateFatigueLevels = () => {
     const levels: Record<string, number> = {};
-    const oneWeekAgo = new Date();
-    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-    
-    const recentWorkouts = workouts.filter(w => new Date(w.workout_date) >= oneWeekAgo);
+    const oneWeekAgo = toLocalDateStr(addDays(new Date(), -7));
+    const recentWorkouts = workouts.filter(w => w.workout_date >= oneWeekAgo);
     recentWorkouts.forEach(w => {
       w.muscle_groups.forEach(mg => {
         levels[mg] = (levels[mg] || 0) + (w.total_volume_kg / 100);
@@ -267,8 +269,8 @@ export default function AnalyticsScreen() {
   const renderVolumeChart = () => {
     // Generate data for the last 7 workouts
     const volumeData = workouts.slice(0, 7).reverse().map(w => ({
-      label: new Date(w.workout_date).toLocaleDateString('en-US', { weekday: 'short' }),
-      value: w.total_volume_kg,
+      label: parseLocalDate(w.workout_date).toLocaleDateString('en-US', { weekday: 'short' }),
+      value: toDisplayWeight(w.total_volume_kg),
       frontColor: accent.red,
     }));
 
@@ -433,7 +435,7 @@ export default function AnalyticsScreen() {
                       <View style={styles.suggestionBox}>
                         <Lightbulb size={18} color={status.warning} />
                         <Text style={styles.suggestionText}>
-                          Suggested: {overloadAnalysis.suggestedWeight} kg
+                          Suggested: {displayWeight(overloadAnalysis.suggestedWeight)}
                           {overloadAnalysis.suggestedReps ? ` × ${overloadAnalysis.suggestedReps} reps` : ''}
                         </Text>
                       </View>
@@ -496,7 +498,7 @@ export default function AnalyticsScreen() {
                             ]}
                           />
                         </View>
-                        <Text style={styles.muscleVolumeValue}>{Math.round(vol)} kg</Text>
+                        <Text style={styles.muscleVolumeValue}>{displayWeight(Math.round(vol))}</Text>
                       </View>
                     ));
                 })()}
@@ -523,7 +525,7 @@ export default function AnalyticsScreen() {
             {/* Inputs */}
             <View style={{ flexDirection: 'row', gap: 12, marginBottom: 20 }}>
               <View style={{ flex: 1 }}>
-                <Text style={{ color: text.secondary, fontSize: 12, fontWeight: '600', marginBottom: 6 }}>Weight (kg)</Text>
+                <Text style={{ color: text.secondary, fontSize: 12, fontWeight: '600', marginBottom: 6 }}>Weight ({unit})</Text>
                 <TextInput
                   style={{
                     backgroundColor: colors.surfaceHighlight,
@@ -584,7 +586,7 @@ export default function AnalyticsScreen() {
                 ESTIMATED 1-REP MAX
               </Text>
               <Text style={{ color: accent.red, fontSize: 32, fontWeight: 'bold' }}>
-                {oneRepMaxVal > 0 ? `${oneRepMaxVal.toFixed(1)} kg` : '--'}
+                {oneRepMaxVal > 0 ? `${oneRepMaxVal.toFixed(1)} ${unit}` : '--'}
               </Text>
             </View>
 
@@ -627,7 +629,7 @@ export default function AnalyticsScreen() {
                       {row.reps}
                     </Text>
                     <Text style={{ color: accent.red, fontWeight: 'bold', fontSize: 13, textAlign: 'right' }}>
-                      {weight > 0 ? `${weight.toFixed(1)} kg` : '--'}
+                      {weight > 0 ? `${weight.toFixed(1)} ${unit}` : '--'}
                     </Text>
                   </View>
                 );
@@ -835,10 +837,10 @@ export default function AnalyticsScreen() {
                 </View>
                 <View style={styles.prValueBox}>
                   <Text style={styles.prValue}>
-                    {pr.value.toFixed(pr.record_type === 'reps' ? 0 : 1)}
+                    {pr.record_type === 'reps' ? pr.value.toFixed(0) : toDisplayWeight(pr.value).toFixed(1)}
                   </Text>
                   <Text style={styles.prUnit}>
-                    {pr.record_type === 'reps' ? 'reps' : 'kg'}
+                    {pr.record_type === 'reps' ? 'reps' : unit}
                   </Text>
                 </View>
               </View>

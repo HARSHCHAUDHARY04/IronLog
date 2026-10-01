@@ -5,9 +5,12 @@
 
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import { Workout, WorkoutExercise, saveWorkout, getLastSessionForExercise, getWorkoutStats, saveUser, getUser, getBestPRForExercise, savePR } from '../lib/storage';
+import { Workout, WorkoutExercise, saveWorkout, getLastSessionForExercise, getWorkoutStats, saveUser, getBestPRForExercise, savePR } from '../lib/storage';
 import { calculate1RM } from '../lib/overloadEngine';
 import { useAuthStore } from './authStore';
+import { useSettingsStore } from './settingsStore';
+import { toLocalDateStr } from '../lib/date';
+import { scheduleRestTimerNotification, cancelRestTimerNotification, scheduleWorkoutReminders } from '../lib/notifications';
 import { checkForPRs } from '../lib/prDetection';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import exerciseLibrary from '../data/exercises.json';
@@ -278,20 +281,26 @@ export const useWorkoutStore = create<WorkoutState>()(
       },
 
       startRestTimer: (seconds?: number) => {
-        const { restTimerDefault } = get();
-        const duration = seconds || restTimerDefault;
+        // The Profile → Rest Timer setting is the source of truth
+        const duration = seconds || useSettingsStore.getState().defaultRestTimer || get().restTimerDefault;
         set({
           restTimerRunning: true,
           restTimerSeconds: duration,
           restTimerStartedAt: new Date().toISOString(),
         });
+        // Alerts the user even if the phone is locked / app backgrounded
+        scheduleRestTimerNotification(duration);
       },
 
       stopRestTimer: () => {
         set({ restTimerRunning: false, restTimerSeconds: 0, restTimerStartedAt: null });
+        cancelRestTimerNotification();
       },
 
-      setRestTimerDefault: (seconds: number) => set({ restTimerDefault: seconds }),
+      setRestTimerDefault: (seconds: number) => {
+        set({ restTimerDefault: seconds });
+        useSettingsStore.getState().setDefaultRestTimer(seconds);
+      },
 
       finishWorkout: async (userId: string, notes?: string) => {
         try {
@@ -299,9 +308,13 @@ export const useWorkoutStore = create<WorkoutState>()(
 
           if (exercises.length === 0) return null;
 
+          // Clear PRs left over from a previous session
+          await AsyncStorage.removeItem('ironlog_session_prs');
+
           const now = new Date();
+          // Cap at 8h so a workout left open overnight doesn't log 900 minutes
           const durationMinutes = startTime
-            ? Math.round((now.getTime() - new Date(startTime).getTime()) / 60000)
+            ? Math.min(480, Math.round((now.getTime() - new Date(startTime).getTime()) / 60000))
             : 0;
 
           // Build workout exercises
@@ -337,14 +350,14 @@ export const useWorkoutStore = create<WorkoutState>()(
           if (workoutExercises.length === 0) return null;
 
           // Determine muscle groups using exercise library lookup
-          for (const ex of exercises) {
-            const muscles = getMuscleGroupsForExercise(ex.name);
-            muscles.forEach(m => muscleGroupsSet.add(m));
+          const loggedNames = [...new Set(workoutExercises.map(e => e.exercise_name))];
+          for (const name of loggedNames) {
+            getMuscleGroupsForExercise(name).forEach(m => muscleGroupsSet.add(m));
           }
 
           const workout = await saveWorkout({
             user_id: userId,
-            workout_date: new Date().toISOString().split('T')[0],
+            workout_date: toLocalDateStr(now),
             name: workoutName,
             muscle_groups: Array.from(muscleGroupsSet),
             duration_minutes: durationMinutes,
@@ -356,10 +369,8 @@ export const useWorkoutStore = create<WorkoutState>()(
           // --- DETECT AND SAVE PRs ---
           try {
             const newPRsDetected: any[] = [];
-            for (const ex of exercises) {
+            for (const ex of loggedNames.map(name => ({ name }))) {
               const workingSets = workoutExercises.filter(e => e.exercise_name === ex.name);
-              if (workingSets.length === 0) continue;
-              
               const hist = await getBestPRForExercise(ex.name);
               
               const mappedSets = workingSets.map(s => ({
@@ -375,7 +386,7 @@ export const useWorkoutStore = create<WorkoutState>()(
               
               const detected = checkForPRs(ex.name, mappedSets, hist);
               for (const pr of detected) {
-                if (pr.is_pr) {
+                if (pr.is_pr || pr.is_baseline) {
                   const saved = await savePR({
                     user_id: userId,
                     exercise_name: pr.exercise_name,
@@ -383,10 +394,10 @@ export const useWorkoutStore = create<WorkoutState>()(
                     value: pr.new_value,
                     previous_value: pr.previous_value ?? undefined,
                     improvement_pct: pr.improvement_pct ?? undefined,
-                    achieved_at: new Date().toISOString().split('T')[0],
+                    achieved_at: now.toISOString(),
                     workout_id: workout.id
                   });
-                  newPRsDetected.push(saved);
+                  if (pr.is_pr) newPRsDetected.push(saved);
                 }
               }
             }
@@ -399,31 +410,39 @@ export const useWorkoutStore = create<WorkoutState>()(
           }
 
           // --- GAMIFICATION: Update XP and Stats ---
+          // With Supabase the database recomputes xp/level/total_workouts from
+          // the workouts table; the local values here are an optimistic preview.
           try {
             const authStore = useAuthStore.getState();
-            const currentUser = await getUser();
-            
-            if (currentUser) {
-              // 1 XP per 100kg volume + 10 XP base for completion
-              const xpEarned = Math.round(totalVolume / 100) + 10;
-              await authStore.addXP(xpEarned);
+            const currentUser = authStore.user;
 
-              // Fetch updated stats to determine streak
+            if (currentUser) {
+              // 1 XP per 100kg volume (max 500) + 10 XP base for completion
+              const xpEarned = Math.min(500, Math.round(totalVolume / 100)) + 10;
+              const newXP = (currentUser.xp || 0) + xpEarned;
               const stats = await getWorkoutStats();
-              
+
               await saveUser({
-                total_workouts: stats.totalWorkouts || 1,
-                current_streak: stats.currentStreak || 1,
-                highest_streak: stats.longestStreak || 1,
+                xp: newXP,
+                level: Math.floor(Math.sqrt(newXP / 100)) + 1,
+                total_workouts: stats.totalWorkouts,
+                current_streak: stats.currentStreak,
+                highest_streak: Math.max(currentUser.highest_streak || 0, stats.longestStreak),
               });
 
               await authStore.checkBadges();
-              // Refresh user state
               await authStore.loadUser();
             }
           } catch (gamificationError) {
             console.error('Gamification update failed in finishWorkout:', gamificationError);
           }
+
+          // Trained today → skip today's reminder
+          const settings = useSettingsStore.getState();
+          if (settings.notificationsEnabled) {
+            scheduleWorkoutReminders(settings.reminderHour, settings.reminderMinute, workout.workout_date);
+          }
+          cancelRestTimerNotification();
 
           // Reset state
           set({
@@ -439,15 +458,7 @@ export const useWorkoutStore = create<WorkoutState>()(
           return workout;
         } catch (error) {
           console.error('Critical error in finishWorkout:', error);
-          // Ensure we reset active state so the app doesn't freeze or stay stuck
-          set({
-            isActive: false,
-            workoutName: '',
-            startTime: null,
-            exercises: [],
-            restTimerRunning: false,
-            restTimerSeconds: 0,
-          });
+          // Keep the session intact so the user can retry instead of losing every set
           throw error;
         }
       },
@@ -460,7 +471,9 @@ export const useWorkoutStore = create<WorkoutState>()(
           exercises: [],
           restTimerRunning: false,
           restTimerSeconds: 0,
+          restTimerStartedAt: null,
         });
+        cancelRestTimerNotification();
       },
 
       reorderExercise: (fromIndex: number, toIndex: number) => {

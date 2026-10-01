@@ -1,6 +1,11 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+// No billing integration exists yet. While this is false every feature is
+// unlocked and no upgrade UI is shown. Flip it on only once real purchases
+// (e.g. RevenueCat / Play Billing) set `isPremium`.
+export const PAYWALL_ENABLED = false;
+
 export type ThemeType = 'system' | 'light' | 'dark';
 export type UnitType = 'kg' | 'lbs';
 
@@ -30,7 +35,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   theme: 'dark', // default to dark
   unit: 'kg',
   defaultRestTimer: 90,
-  isPremium: false,
+  isPremium: !PAYWALL_ENABLED,
   weeklyGoal: 3, // default to 3 workouts per week
   notificationsEnabled: false,
   reminderHour: 18, // 6 PM default
@@ -53,8 +58,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   upgradeToPremium: async () => {
-    set({ isPremium: true });
-    await AsyncStorage.setItem('settings_premium', 'true');
+    // Intentionally a no-op until a billing provider verifies purchases.
+    // Premium must never be granted by a button tap alone.
   },
 
   setWeeklyGoal: async (goal) => {
@@ -96,12 +101,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         theme: (theme as ThemeType) || 'dark',
         unit: (unit as UnitType) || 'kg',
         defaultRestTimer: rest ? parseInt(rest, 10) : 90,
-        isPremium: premium === 'true',
+        isPremium: !PAYWALL_ENABLED || premium === 'true',
         weeklyGoal: weekly ? parseInt(weekly, 10) : 3,
         notificationsEnabled: notifications === 'true',
         reminderHour: remHour ? parseInt(remHour, 10) : 18,
         reminderMinute: remMin ? parseInt(remMin, 10) : 0,
-        streakGraceDays: grace ? parseInt(grace, 10) : 2,
+        streakGraceDays: grace ? Math.max(1, parseInt(grace, 10) || 2) : 2,
       });
     } catch (e) {
       console.error('Failed to load settings', e);

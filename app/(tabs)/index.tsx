@@ -42,10 +42,13 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { getWorkoutStats, getTemplates, getPRs, getWorkouts, type PRRecord, type WorkoutTemplate, type Workout } from '../../lib/storage';
 import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { toLocalDateStr, startOfWeek as getStartOfWeek, addDays } from '../../lib/date';
+import { useUnit, toDisplayWeight, displayWeight } from '../../lib/units';
 
 const { width } = Dimensions.get('window');
 
 export default function HomeScreen() {
+  const unit = useUnit();
   const { colors, text, accent, status, muscle, isDark } = useThemeColor();
   const styles = React.useMemo(() => getStyles(colors, text, accent, status, muscle), [colors, text, accent, status, muscle]);
 
@@ -122,25 +125,22 @@ export default function HomeScreen() {
         await AsyncStorage.removeItem('ironlog_session_prs');
       }
 
-      // Load persistent daily macros with midnight auto-reset
+      // Daily macros reset at local midnight
       const storedMacros = await AsyncStorage.getItem('ironlog_daily_macros');
       const storedMacrosDate = await AsyncStorage.getItem('ironlog_daily_macros_date');
-      const todayStr = new Date().toISOString().split('T')[0];
+      const todayStr = toLocalDateStr();
 
       if (storedMacros && storedMacrosDate === todayStr) {
         setDailyMacros(JSON.parse(storedMacros));
-      }
-
-      // Load cached weekly report
-      const cachedReport = await getCachedReport();
-      if (cachedReport) {
-        setWeeklyReport(cachedReport);
       } else {
         const cleared = { protein: 0, carbs: 0, fat: 0, calories: 0 };
         setDailyMacros(cleared);
         await AsyncStorage.setItem('ironlog_daily_macros', JSON.stringify(cleared));
         await AsyncStorage.setItem('ironlog_daily_macros_date', todayStr);
       }
+
+      const cachedReport = await getCachedReport();
+      if (cachedReport) setWeeklyReport(cachedReport);
     } catch (e) {
       console.error('Error loading dashboard data:', e);
     }
@@ -151,12 +151,9 @@ export default function HomeScreen() {
     setScanningMeal(true);
     setScannedMealResult(null);
 
-    const systemPrompt = `You are a sports nutritionist. 
-    Analyze the following meal description and return estimated calories, protein (g), carbs (g), fat (g), and a short 1-sentence tactical coaching advice.
-    Meal: "${mealDescription}"`;
-
     const payload = {
-      contents: [{ parts: [{ text: systemPrompt }] }],
+      systemInstruction: { parts: [{ text: 'You are a sports nutritionist. Analyze the meal the user describes and return estimated calories, protein (g), carbs (g), fat (g), and a short 1-sentence tactical coaching advice. If the text is not a meal, return zeros.' }] },
+      contents: [{ role: 'user' as const, parts: [{ text: mealDescription.slice(0, 500) }] }],
       generationConfig: {
         responseMimeType: 'application/json',
         responseSchema: {
@@ -183,15 +180,15 @@ export default function HomeScreen() {
         setScannedMealResult(parsed);
         
         const updated = {
-          protein: dailyMacros.protein + parsed.protein_g,
-          carbs: dailyMacros.carbs + parsed.carbs_g,
-          fat: dailyMacros.fat + parsed.fat_g,
-          calories: dailyMacros.calories + parsed.calories,
+          protein: dailyMacros.protein + (parsed.protein_g || 0),
+          carbs: dailyMacros.carbs + (parsed.carbs_g || 0),
+          fat: dailyMacros.fat + (parsed.fat_g || 0),
+          calories: dailyMacros.calories + (parsed.calories || 0),
         };
         
         setDailyMacros(updated);
         await AsyncStorage.setItem('ironlog_daily_macros', JSON.stringify(updated));
-        await AsyncStorage.setItem('ironlog_daily_macros_date', new Date().toISOString().split('T')[0]);
+        await AsyncStorage.setItem('ironlog_daily_macros_date', toLocalDateStr());
       }
     } catch (err) {
       console.error(err);
@@ -221,25 +218,15 @@ export default function HomeScreen() {
   );
 
   const getWorkoutsForWeekDays = React.useMemo(() => {
-    const today = new Date();
-    const currentDay = today.getDay(); // 0 is Sunday, 1 is Monday, etc.
-    const distanceToMonday = currentDay === 0 ? -6 : 1 - currentDay;
-    const startOfWeek = new Date(today);
-    startOfWeek.setDate(today.getDate() + distanceToMonday);
-    startOfWeek.setHours(0, 0, 0, 0);
+    const startOfWeek = getStartOfWeek();
+    const workoutDates = new Set(workouts.map(w => w.workout_date));
 
     const days: { date: Date; hasWorkout: boolean; label: string }[] = [];
     const dayLabels = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 
     for (let i = 0; i < 7; i++) {
-      const date = new Date(startOfWeek);
-      date.setDate(startOfWeek.getDate() + i);
-      
-      const dateStr = date.toISOString().split('T')[0];
-      const hasWorkout = workouts.some(w => {
-        const wDate = new Date(w.workout_date).toISOString().split('T')[0];
-        return wDate === dateStr;
-      });
+      const date = addDays(startOfWeek, i);
+      const hasWorkout = workoutDates.has(toLocalDateStr(date));
 
       days.push({
         date,
@@ -297,9 +284,10 @@ export default function HomeScreen() {
     ? Math.round(((stats.thisWeekVolume - stats.lastWeekVolume) / stats.lastWeekVolume) * 100)
     : 0;
 
-  const formatVolume = (v: number) => {
+  const formatVolume = (kg: number) => {
+    const v = toDisplayWeight(kg, unit);
     if (v >= 1000) return `${(v / 1000).toFixed(1)}k`;
-    return v.toString();
+    return Math.round(v).toString();
   };
 
   return (
@@ -374,7 +362,7 @@ export default function HomeScreen() {
             <View style={[styles.heroProgressSection, { marginTop: Spacing.md }]}>
               <View style={styles.heroProgressHeader}>
                 <Text style={styles.heroProgressTitle}>Weekly Volume Target</Text>
-                <Text style={styles.heroProgressAmount}>{formatVolume(stats.thisWeekVolume)} / {formatVolume(Math.round(Math.max(10000, stats.lastWeekVolume * 1.05)))} kg</Text>
+                <Text style={styles.heroProgressAmount}>{formatVolume(stats.thisWeekVolume)} / {formatVolume(Math.round(Math.max(10000, stats.lastWeekVolume * 1.05)))} {unit}</Text>
               </View>
               <View style={styles.heroProgressBarContainer}>
                 <View style={[styles.heroProgressBarFill, { width: `${Math.min(100, (stats.thisWeekVolume / Math.max(10000, stats.lastWeekVolume * 1.05)) * 100)}%`, backgroundColor: status.info }]} />
@@ -405,7 +393,7 @@ export default function HomeScreen() {
 
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
               {getWorkoutsForWeekDays.map((day, idx) => {
-                const isToday = new Date().toISOString().split('T')[0] === day.date.toISOString().split('T')[0];
+                const isToday = toLocalDateStr() === toLocalDateStr(day.date);
                 return (
                   <View key={idx} style={{ alignItems: 'center', gap: 6 }}>
                     <Text style={{ 
@@ -705,8 +693,8 @@ export default function HomeScreen() {
                 <View style={styles.prInfo}>
                   <Text style={styles.prExercise}>{pr.exercise_name}</Text>
                   <Text style={styles.prValue}>
-                    {pr.record_type === '1rm' ? `${pr.value.toFixed(1)} kg est. 1RM` :
-                     pr.record_type === 'volume' ? `${pr.value} kg volume` :
+                    {pr.record_type === '1rm' ? `${displayWeight(pr.value)} est. 1RM` :
+                     pr.record_type === 'volume' ? `${displayWeight(pr.value)} volume` :
                      `${pr.value} reps`}
                   </Text>
                 </View>
@@ -995,7 +983,7 @@ export default function HomeScreen() {
                   </View>
                   <View style={{ alignItems: 'flex-end', gap: 4 }}>
                     <Text style={{ color: '#EAB308', fontWeight: '900', fontSize: 18 }}>
-                      {pr.value} {pr.record_type === 'reps' ? 'reps' : 'kg'}
+                      {pr.record_type === 'reps' ? `${pr.value} reps` : displayWeight(pr.value)}
                     </Text>
                     {pr.improvement_pct && (
                       <View style={{
