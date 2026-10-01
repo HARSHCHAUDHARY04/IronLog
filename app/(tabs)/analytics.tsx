@@ -26,7 +26,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { parseLocalDate, toLocalDateStr, addDays } from '../../lib/date';
 import { useUnit, toDisplayWeight, displayWeight } from '../../lib/units';
 import { LineChart, BarChart } from 'react-native-gifted-charts';
-import { useThemeColor, Spacing, BorderRadius, FontSize, FontWeight, Shadows } from '../../lib/theme';
+import { useThemeColor, Spacing, BorderRadius, FontSize, FontWeight, Shadows, Fonts } from '../../lib/theme';
 import { getWorkouts, getExerciseHistory, getPRs, getWorkoutStats, Workout, PRRecord, saveTemplate } from '../../lib/storage';
 import { analyzeOverload, type OverloadAnalysis } from '../../lib/overloadEngine';
 import MuscleHeatmap from '../../components/MuscleHeatmap';
@@ -212,7 +212,8 @@ export default function AnalyticsScreen() {
       value: toDisplayWeight(h.best_1rm),
     })));
 
-    const analysis = analyzeOverload(reversedHistory.map(h => ({
+    // analyzeOverload expects newest session first (the chart above wants oldest first)
+    const analysis = analyzeOverload(filtered.map(h => ({
       workout_date: h.workout_date,
       sets: h.sets,
       best_1rm: h.best_1rm,
@@ -866,20 +867,22 @@ const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any
   },
   title: {
     color: text.primary,
-    fontSize: FontSize['3xl'],
-    fontWeight: FontWeight.extrabold,
     marginBottom: Spacing['xl'],
-    letterSpacing: -0.5,
+    fontFamily: Fonts.displayHeavy,
+    fontSize: 40,
+    lineHeight: 44,
+    textTransform: 'uppercase',
+    letterSpacing: 0.2,
   },
 
   // Section
   sectionTitle: {
     color: text.secondary,
-    fontSize: FontSize.sm,
-    fontWeight: FontWeight.bold,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
     marginBottom: Spacing.md,
+    fontFamily: Fonts.display,
+    fontSize: 18,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
   },
   
   // Mode Selector
@@ -983,8 +986,10 @@ const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any
   },
   chartTitle: {
     color: text.primary,
-    fontSize: FontSize.lg,
-    fontWeight: FontWeight.bold,
+    fontFamily: Fonts.display,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+    fontSize: 20,
   },
   chartSubtitle: {
     color: text.tertiary,
@@ -1020,8 +1025,10 @@ const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any
     marginBottom: Spacing.sm,
   },
   analysisStatus: {
-    fontSize: FontSize.lg,
-    fontWeight: FontWeight.bold,
+    fontFamily: Fonts.display,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+    fontSize: 20,
   },
   analysisDetails: {
     color: text.secondary,
@@ -1097,8 +1104,8 @@ const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any
   },
   prValue: {
     color: text.primary,
-    fontSize: FontSize.xl,
-    fontWeight: FontWeight.extrabold,
+    fontFamily: Fonts.displayHeavy,
+    fontSize: 26,
   },
   prUnit: {
     color: text.tertiary,
@@ -1134,7 +1141,7 @@ const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any
     fontSize: FontSize.xs,
     width: 55,
     textAlign: 'right',
-    fontWeight: FontWeight.semibold,
+    fontFamily: Fonts.displayHeavy,
   },
 
   // Paywall

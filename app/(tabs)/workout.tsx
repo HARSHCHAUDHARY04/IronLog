@@ -16,9 +16,10 @@ import {
   Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { Dumbbell } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from 'expo-router';
-import { Colors, useThemeColor, Spacing, BorderRadius, FontSize, FontWeight, Shadows } from '../../lib/theme';
+import { Colors, useThemeColor, Spacing, BorderRadius, FontSize, FontWeight, Shadows, Fonts, getMuscleColor } from '../../lib/theme';
 import { useWorkoutStore } from '../../stores/workoutStore';
 import { getTemplates, WorkoutTemplate, getWorkouts, Workout, deleteTemplate, saveTemplate } from '../../lib/storage';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -204,19 +205,6 @@ export default function WorkoutTab() {
       )
     : templates;
 
-  const muscleGroupIcons: Record<string, string> = {
-    chest: '💪',
-    back: '🔙',
-    shoulders: '🏋️',
-    quadriceps: '🦵',
-    hamstrings: '🦵',
-    glutes: '🍑',
-    biceps: '💪',
-    triceps: '💪',
-    core: '🎯',
-    arms: '💪',
-    calves: '🦶',
-  };
 
   return (
     <View style={styles.container}>
@@ -324,10 +312,8 @@ export default function WorkoutTab() {
               onPress={() => handleStartTemplate(template)}
               activeOpacity={0.8}
             >
-              <View style={styles.templateIcon}>
-                <Text style={styles.templateEmoji}>
-                  {muscleGroupIcons[template.muscle_groups[0]] || '⚡'}
-                </Text>
+              <View style={[styles.templateIcon, { backgroundColor: `${getMuscleColor(template.muscle_groups[0])}1F` }]}>
+                <Dumbbell size={20} color={getMuscleColor(template.muscle_groups[0])} />
               </View>
               <View style={styles.templateInfo}>
                 <Text style={styles.templateName}>{template.name}</Text>
@@ -794,9 +780,12 @@ const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any
   },
   title: {
     color: text.primary,
-    fontSize: FontSize['3xl'],
-    fontWeight: FontWeight.extrabold,
     marginBottom: Spacing['2xl'],
+    fontFamily: Fonts.displayHeavy,
+    fontSize: 40,
+    lineHeight: 44,
+    textTransform: 'uppercase',
+    letterSpacing: 0.2,
   },
 
   // Continue card
@@ -878,11 +867,11 @@ const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any
   // Section
   sectionTitle: {
     color: text.secondary,
-    fontSize: FontSize.sm,
-    fontWeight: FontWeight.bold,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
     marginBottom: Spacing.md,
+    fontFamily: Fonts.display,
+    fontSize: 18,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
   },
 
   // Template card
@@ -904,17 +893,16 @@ const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any
     alignItems: 'center',
     justifyContent: 'center',
   },
-  templateEmoji: {
-    fontSize: 22,
-  },
   templateInfo: {
     flex: 1,
     marginLeft: Spacing.md,
   },
   templateName: {
     color: text.primary,
-    fontSize: FontSize.md,
-    fontWeight: FontWeight.bold,
+    fontFamily: Fonts.display,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+    fontSize: 20,
   },
   templateMuscles: {
     color: text.secondary,
@@ -943,8 +931,10 @@ const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any
   },
   recentName: {
     color: text.primary,
-    fontSize: FontSize.md,
-    fontWeight: FontWeight.semibold,
+    fontFamily: Fonts.display,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+    fontSize: 18,
   },
   recentMeta: {
     color: text.tertiary,

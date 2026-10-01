@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Platform, KeyboardAvoidingView, Alert, ActivityIndicator } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, useThemeColor, Spacing, BorderRadius, FontSize, FontWeight } from '../../lib/theme';
+import { Colors, useThemeColor, Spacing, BorderRadius, FontSize, FontWeight, Fonts } from '../../lib/theme';
 import { useAuthStore } from '../../stores/authStore';
 import { Sparkles, Send, Brain, Bot } from 'lucide-react-native';
 import MarkdownText from '../../components/MarkdownText';
@@ -1219,14 +1219,14 @@ function getTimeAgo(date: Date): string {
 const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any) => StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   header: { paddingTop: 60, paddingHorizontal: Spacing.lg, paddingBottom: Spacing.md },
-  title: { color: text.primary, fontSize: FontSize['3xl'], fontWeight: FontWeight.extrabold },
+  title: { color: text.primary, fontFamily: Fonts.displayHeavy, fontSize: 40, lineHeight: 44, textTransform: 'uppercase', letterSpacing: 0.2 },
   tabSelector: { flexDirection: 'row', paddingHorizontal: Spacing.lg, marginBottom: Spacing.md },
   tab: { flex: 1, paddingVertical: Spacing.sm, alignItems: 'center', borderBottomWidth: 2, borderBottomColor: 'transparent' },
   activeTab: { borderBottomColor: accent.red },
   tabText: { color: text.tertiary, fontWeight: 'bold' },
   activeTabText: { color: text.primary },
   content: { padding: Spacing.lg },
-  sectionTitle: { color: text.secondary, textTransform: 'uppercase', fontSize: 12, fontWeight: 'bold', marginBottom: Spacing.md },
+  sectionTitle: { color: text.secondary, marginBottom: Spacing.md, fontFamily: Fonts.display, fontSize: 18, textTransform: 'uppercase', letterSpacing: 0.8 },
   userCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, padding: Spacing.md, borderRadius: BorderRadius.lg, marginBottom: Spacing.sm },
   myCard: { borderColor: accent.red, borderWidth: 1 },
   rank: { color: text.tertiary, fontSize: 18, fontWeight: 'bold', width: 40 },

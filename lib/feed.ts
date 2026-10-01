@@ -5,7 +5,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase, isSupabaseConfigured } from './supabase';
 import { fetchFriends } from './social';
-import { getLocalUser, generateId } from './storage';
+import { getLocalUser, generateId, getSessionUserId } from './storage';
 
 const FEED_KEY = 'ironlog_feed_posts';
 const REACTIONS_KEY = 'ironlog_feed_reactions';
@@ -92,7 +92,8 @@ export async function shareWorkout(data: {
  */
 export async function getFeed(): Promise<WorkoutPost[]> {
   const user = await getLocalUser();
-  if (isSupabaseConfigured && user?.id) {
+  // Only hit the server with a real session; a cached local user alone can't read anything
+  if (user?.id && (await getSessionUserId()) === user.id) {
     try {
       // RLS also enforces this once the migration is applied
       const friends = await fetchFriends().catch(() => []);

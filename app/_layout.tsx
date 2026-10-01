@@ -11,6 +11,12 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { Colors, useThemeColor } from '../lib/theme';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import {
+  useFonts,
+  BarlowCondensed_600SemiBold,
+  BarlowCondensed_700Bold,
+  BarlowCondensed_800ExtraBold,
+} from '@expo-google-fonts/barlow-condensed';
 
 // Prevent splash screen from auto-hiding
 SplashScreen.preventAutoHideAsync();
@@ -34,10 +40,15 @@ export default function RootLayout() {
   const { loadUser } = useAuthStore();
   const { loadSettings } = useSettingsStore();
   const { isDark, colors, text } = useThemeColor();
+  const [fontsLoaded, fontError] = useFonts({
+    BarlowCondensed_600SemiBold,
+    BarlowCondensed_700Bold,
+    BarlowCondensed_800ExtraBold,
+  });
+  const fontsReady = fontsLoaded || !!fontError;
 
   useEffect(() => {
     Promise.all([loadUser(), loadSettings()]).then(() => {
-      SplashScreen.hideAsync();
       setReady(true);
       runBackgroundMaintenance();
     });
@@ -49,7 +60,11 @@ export default function RootLayout() {
     return () => sub.remove();
   }, []);
 
-  if (!ready) {
+  useEffect(() => {
+    if (ready && fontsReady) SplashScreen.hideAsync();
+  }, [ready, fontsReady]);
+
+  if (!ready || !fontsReady) {
     return null;
   }
 

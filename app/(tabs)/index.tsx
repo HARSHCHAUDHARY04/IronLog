@@ -22,7 +22,7 @@ import {
 import { 
   User, Dumbbell, PlusCircle, Flame, Calendar, 
   TrendingUp, ArrowUp, ArrowDown, Clock, Activity, 
-  Trophy, Target, ChevronRight, Sparkles
+  Trophy, Target, ChevronRight, Sparkles, Play
 } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { generateGeminiContent } from '../../lib/gemini';
@@ -35,7 +35,8 @@ import Animated, {
   withSequence,
   FadeInDown
 } from 'react-native-reanimated';
-import { useThemeColor, Spacing, BorderRadius, FontSize, FontWeight, Shadows } from '../../lib/theme';
+import { useThemeColor, Spacing, BorderRadius, FontSize, FontWeight, Shadows, Fonts, getMuscleColor } from '../../lib/theme';
+import { ProgressRing, SectionHeader } from '../../components/ui';
 import { useAuthStore } from '../../stores/authStore';
 import { useWorkoutStore } from '../../stores/workoutStore';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -49,8 +50,8 @@ const { width } = Dimensions.get('window');
 
 export default function HomeScreen() {
   const unit = useUnit();
-  const { colors, text, accent, status, muscle, isDark } = useThemeColor();
-  const styles = React.useMemo(() => getStyles(colors, text, accent, status, muscle), [colors, text, accent, status, muscle]);
+  const { colors, text, accent, status, muscle, isDark, gradients } = useThemeColor();
+  const styles = React.useMemo(() => getStyles(colors, text, accent, status, muscle, isDark), [colors, text, accent, status, muscle, isDark]);
 
   const router = useRouter();
   const { user } = useAuthStore();
@@ -86,7 +87,6 @@ export default function HomeScreen() {
   const [scanningMeal, setScanningMeal] = useState(false);
   const [scannedMealResult, setScannedMealResult] = useState<any | null>(null);
   
-  const pulseScale = useSharedValue(1);
 
   const handleGenerateReport = useCallback(async () => {
     setLoadingReport(true);
@@ -238,20 +238,6 @@ export default function HomeScreen() {
     return days;
   }, [workouts]);
 
-  useEffect(() => {
-    pulseScale.value = withRepeat(
-      withSequence(
-        withTiming(1.03, { duration: 1500 }),
-        withTiming(1, { duration: 1500 })
-      ),
-      -1,
-      true
-    );
-  }, []);
-
-  const animatedPulseStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: pulseScale.value }],
-  }));
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -275,10 +261,12 @@ export default function HomeScreen() {
 
   const getGreeting = () => {
     const hour = new Date().getHours();
-    if (hour < 12) return 'Good Morning';
-    if (hour < 17) return 'Good Afternoon';
-    return 'Good Evening';
+    if (hour < 12) return 'Morning';
+    if (hour < 17) return 'Afternoon';
+    return 'Evening';
   };
+
+  const muscleTint = getMuscleColor;
 
   const volumeChange = stats.lastWeekVolume > 0
     ? Math.round(((stats.thisWeekVolume - stats.lastWeekVolume) / stats.lastWeekVolume) * 100)
@@ -305,314 +293,213 @@ export default function HomeScreen() {
           />
         }
       >
-        {/* Header Section */}
-        <Animated.View entering={FadeInDown.delay(100).springify()} style={styles.header}>
-          <View>
-            <Text style={styles.greeting}>{getGreeting()}</Text>
-            <Text style={styles.userName}>{user?.name || 'Lifter'}</Text>
+        {/* Header */}
+        <Animated.View entering={FadeInDown.delay(60).springify()} style={styles.header}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.dateEyebrow}>
+              {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
+            </Text>
+            <Text style={styles.greeting} numberOfLines={1}>
+              {getGreeting()}, <Text style={{ color: accent.red }}>{(user?.name || 'Lifter').split(' ')[0]}</Text>
+            </Text>
           </View>
-          <TouchableOpacity 
-            style={styles.profileButton}
+          <TouchableOpacity
+            style={styles.avatarButton}
             onPress={() => router.push('/(tabs)/profile')}
+            activeOpacity={0.8}
           >
-            <LinearGradient
-              colors={[colors.surfaceHighlight, colors.surface]}
-              style={styles.profileGradient}
-            >
-              <User size={20} color={text.secondary} />
+            <LinearGradient colors={gradients.ember as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.avatar}>
+              <Text style={styles.avatarText}>{(user?.name || 'L').charAt(0).toUpperCase()}</Text>
             </LinearGradient>
+            <View style={styles.levelBadge}>
+              <Text style={styles.levelBadgeText}>{user?.level || 1}</Text>
+            </View>
           </TouchableOpacity>
         </Animated.View>
 
-        {/* Hero Dashboard Overview */}
-        <Animated.View entering={FadeInDown.delay(200).springify()} style={styles.heroDashboard}>
+        {/* Hero: streak + weekly goal ring */}
+        <Animated.View entering={FadeInDown.delay(120).springify()}>
           <LinearGradient
-            colors={[colors.surfaceElevated, colors.surface]}
-            style={styles.heroGradient}
+            colors={(isDark ? gradients.heroDark : gradients.heroLight) as any}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.hero}
           >
-            <View style={styles.heroTopRow}>
-              <View style={styles.heroStatItem}>
-                <Flame size={20} color={accent.red} />
-                <View style={styles.heroStatTextContainer}>
-                  <Text style={styles.heroStatValue}>{stats.currentStreak} Days</Text>
-                  <Text style={styles.heroStatLabel}>Current Streak</Text>
+            <View style={styles.heroRow}>
+              <View style={{ flex: 1 }}>
+                <View style={styles.heroEyebrowRow}>
+                  <Flame size={16} color={accent.red} fill={stats.currentStreak > 0 ? accent.red : 'transparent'} />
+                  <Text style={styles.heroEyebrow}>Current streak</Text>
                 </View>
-              </View>
-              <View style={styles.heroDivider} />
-              <View style={styles.heroStatItem}>
-                <Dumbbell size={20} color={status.info} />
-                <View style={styles.heroStatTextContainer}>
-                  <Text style={styles.heroStatValue}>{stats.totalWorkouts}</Text>
-                  <Text style={styles.heroStatLabel}>Total Sessions</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 6 }}>
+                  <Text style={styles.heroNumber}>{stats.currentStreak}</Text>
+                  <Text style={styles.heroNumberUnit}>{stats.currentStreak === 1 ? 'day' : 'days'}</Text>
                 </View>
+                <Text style={styles.heroCaption}>
+                  {stats.currentStreak > 0
+                    ? `Best: ${Math.max(stats.longestStreak, stats.currentStreak)} days · keep it alive`
+                    : 'Log a workout to start a streak'}
+                </Text>
               </View>
-            </View>
-            
-            {/* Weekly Progress Bars */}
-            <View style={styles.heroProgressSection}>
-              <View style={styles.heroProgressHeader}>
-                <Text style={styles.heroProgressTitle}>Weekly Workouts Goal</Text>
-                <Text style={styles.heroProgressAmount}>{stats.thisWeekWorkouts} / {weeklyGoal}</Text>
-              </View>
-              <View style={styles.heroProgressBarContainer}>
-                <View style={[styles.heroProgressBarFill, { width: `${Math.min(100, (stats.thisWeekWorkouts / Math.max(1, weeklyGoal)) * 100)}%`, backgroundColor: accent.red }]} />
-              </View>
+
+              <ProgressRing progress={stats.thisWeekWorkouts / Math.max(1, weeklyGoal)} size={104} strokeWidth={10}>
+                <Text style={styles.ringValue}>
+                  {stats.thisWeekWorkouts}
+                  <Text style={styles.ringTotal}>/{weeklyGoal}</Text>
+                </Text>
+                <Text style={styles.ringLabel}>this week</Text>
+              </ProgressRing>
             </View>
 
-            <View style={[styles.heroProgressSection, { marginTop: Spacing.md }]}>
-              <View style={styles.heroProgressHeader}>
-                <Text style={styles.heroProgressTitle}>Weekly Volume Target</Text>
-                <Text style={styles.heroProgressAmount}>{formatVolume(stats.thisWeekVolume)} / {formatVolume(Math.round(Math.max(10000, stats.lastWeekVolume * 1.05)))} {unit}</Text>
+            <View style={styles.heroStats}>
+              <View style={styles.heroStat}>
+                <Text style={styles.heroStatValue}>{formatVolume(stats.thisWeekVolume)}</Text>
+                <Text style={styles.heroStatLabel}>{unit} this week</Text>
               </View>
-              <View style={styles.heroProgressBarContainer}>
-                <View style={[styles.heroProgressBarFill, { width: `${Math.min(100, (stats.thisWeekVolume / Math.max(10000, stats.lastWeekVolume * 1.05)) * 100)}%`, backgroundColor: status.info }]} />
+              <View style={styles.heroStatDivider} />
+              <View style={styles.heroStat}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+                  {volumeChange !== 0 && (volumeChange > 0
+                    ? <ArrowUp size={16} color={status.success} />
+                    : <ArrowDown size={16} color={status.regression} />)}
+                  <Text style={[styles.heroStatValue, volumeChange > 0 && { color: status.success }, volumeChange < 0 && { color: status.regression }]}>
+                    {stats.lastWeekVolume > 0 ? `${Math.abs(volumeChange)}%` : '—'}
+                  </Text>
+                </View>
+                <Text style={styles.heroStatLabel}>vs last week</Text>
+              </View>
+              <View style={styles.heroStatDivider} />
+              <View style={styles.heroStat}>
+                <Text style={styles.heroStatValue}>{stats.totalWorkouts}</Text>
+                <Text style={styles.heroStatLabel}>sessions</Text>
               </View>
             </View>
           </LinearGradient>
         </Animated.View>
 
-        {/* Weekly Consistency Calendar strip */}
-        <Animated.View entering={FadeInDown.delay(250).springify()} style={{ marginHorizontal: Spacing.lg, marginTop: Spacing.sm, marginBottom: Spacing.lg }}>
-          <View style={{
-            backgroundColor: colors.surfaceElevated,
-            borderRadius: BorderRadius.xl,
-            padding: Spacing.md,
-            borderWidth: 1,
-            borderColor: colors.border,
-            ...Shadows.md
-          }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <Calendar size={18} color={accent.red} />
-                <Text style={{ color: text.primary, fontWeight: 'bold', fontSize: 14 }}>Weekly Consistency</Text>
-              </View>
-              <Text style={{ color: text.secondary, fontSize: 12, fontWeight: '500' }}>
-                {stats.thisWeekWorkouts} / {weeklyGoal} goal
-              </Text>
-            </View>
+        {/* Week strip */}
+        <Animated.View entering={FadeInDown.delay(180).springify()} style={styles.card}>
+          <View style={styles.weekRow}>
+            {getWorkoutsForWeekDays.map((day, idx) => {
+              const isToday = toLocalDateStr() === toLocalDateStr(day.date);
+              return (
+                <View key={idx} style={styles.weekDay}>
+                  <Text style={[styles.weekLabel, isToday && { color: accent.red }]}>{day.label}</Text>
+                  {day.hasWorkout ? (
+                    <LinearGradient colors={gradients.ember as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.weekDot}>
+                      <Flame size={15} color="#fff" fill="#fff" />
+                    </LinearGradient>
+                  ) : (
+                    <View style={[styles.weekDot, styles.weekDotEmpty, isToday && styles.weekDotToday]}>
+                      <Text style={[styles.weekDate, isToday && { color: accent.red }]}>{day.date.getDate()}</Text>
+                    </View>
+                  )}
+                </View>
+              );
+            })}
+          </View>
+        </Animated.View>
 
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              {getWorkoutsForWeekDays.map((day, idx) => {
-                const isToday = toLocalDateStr() === toLocalDateStr(day.date);
-                return (
-                  <View key={idx} style={{ alignItems: 'center', gap: 6 }}>
-                    <Text style={{ 
-                      color: isToday ? accent.red : text.tertiary, 
-                      fontSize: 11, 
-                      fontWeight: isToday ? 'bold' : '500' 
-                    }}>
-                      {day.label}
-                    </Text>
-                    <View style={{
-                      width: 36,
-                      height: 36,
-                      borderRadius: 18,
-                      borderWidth: 1,
-                      borderColor: day.hasWorkout ? accent.red : colors.border,
-                      backgroundColor: day.hasWorkout ? 'rgba(239, 68, 68, 0.15)' : colors.surfaceHighlight,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      position: 'relative'
-                    }}>
-                      {day.hasWorkout ? (
-                        <Flame size={18} color={accent.red} />
-                      ) : (
-                        <Text style={{ color: text.secondary, fontSize: 12, fontWeight: '500' }}>
-                          {day.date.getDate()}
-                        </Text>
-                      )}
-                      {isToday && !day.hasWorkout && (
-                        <View style={{
-                          position: 'absolute',
-                          bottom: -2,
-                          width: 6,
-                          height: 6,
-                          borderRadius: 3,
-                          backgroundColor: accent.red
-                        }} />
-                      )}
+        {/* Primary CTA */}
+        <Animated.View entering={FadeInDown.delay(240).springify()}>
+          <TouchableOpacity onPress={handleStartWorkout} activeOpacity={0.88} style={styles.ctaShadow}>
+            <LinearGradient colors={gradients.ember as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.cta}>
+              <View>
+                <Text style={styles.ctaEyebrow}>{isActive ? 'Workout in progress' : 'Ready when you are'}</Text>
+                <Text style={styles.ctaTitle}>{isActive ? 'Resume session' : 'Start workout'}</Text>
+              </View>
+              <View style={styles.ctaIcon}>
+                {isActive ? <Dumbbell size={22} color={accent.red} /> : <Play size={22} color={accent.red} fill={accent.red} />}
+              </View>
+            </LinearGradient>
+          </TouchableOpacity>
+        </Animated.View>
+
+        {/* Routines */}
+        <Animated.View entering={FadeInDown.delay(300).springify()} style={styles.section}>
+          <SectionHeader title="Quick start" actionLabel="All routines" onAction={() => router.push('/(tabs)/workout')} />
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: Spacing.md, paddingRight: Spacing.lg }} style={styles.templateScroll}>
+            {templates.slice(0, 6).map((template) => {
+              const tint = muscleTint(template.muscle_groups[0]);
+              return (
+                <TouchableOpacity
+                  key={template.id}
+                  style={styles.templateCard}
+                  onPress={() => handleStartTemplate(template)}
+                  activeOpacity={0.85}
+                >
+                  <View style={[styles.templateAccent, { backgroundColor: tint }]} />
+                  <Text style={styles.templateName} numberOfLines={1}>{template.name}</Text>
+                  <Text style={styles.templateMeta} numberOfLines={1}>
+                    {template.muscle_groups.slice(0, 3).map(m => m.charAt(0).toUpperCase() + m.slice(1)).join(' · ')}
+                  </Text>
+                  <View style={styles.templateFooter}>
+                    <Text style={styles.templateCount}>{template.exercises.length} exercises</Text>
+                    <View style={[styles.templatePlay, { backgroundColor: `${tint}22` }]}>
+                      <Play size={12} color={tint} fill={tint} />
                     </View>
                   </View>
-                );
-              })}
-            </View>
-          </View>
-        </Animated.View>
-
-        {/* AI Meal Scanner Dashboard Card */}
-        <Animated.View entering={FadeInDown.delay(260).springify()} style={{ marginHorizontal: Spacing.lg, marginTop: 0, marginBottom: Spacing.lg }}>
-          <View style={{
-            backgroundColor: colors.surfaceElevated,
-            borderRadius: BorderRadius.xl,
-            padding: Spacing.md,
-            borderWidth: 1,
-            borderColor: colors.border,
-            ...Shadows.md
-          }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <Sparkles size={18} color="#EAB308" />
-                <Text style={{ color: text.primary, fontWeight: 'bold', fontSize: 14 }}>Daily AI Nutrition Tracker</Text>
-              </View>
-              {dailyMacros.calories > 0 && (
-                <TouchableOpacity onPress={handleClearMacros}>
-                  <Text style={{ color: accent.red, fontSize: 11, fontWeight: 'bold' }}>Reset</Text>
                 </TouchableOpacity>
-              )}
-            </View>
-
-            {/* Quick Macro Pills */}
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 8, marginBottom: 16 }}>
-              {[
-                { label: 'Calories', val: `${dailyMacros.calories} kcal`, color: '#3B82F6' },
-                { label: 'Protein', val: `${dailyMacros.protein}g`, color: '#EF4444' },
-                { label: 'Carbs', val: `${dailyMacros.carbs}g`, color: '#10B981' },
-                { label: 'Fat', val: `${dailyMacros.fat}g`, color: '#F59E0B' }
-              ].map(macro => (
-                <View key={macro.label} style={{
-                  flex: 1,
-                  backgroundColor: colors.surfaceHighlight,
-                  borderRadius: BorderRadius.md,
-                  padding: 8,
-                  alignItems: 'center',
-                  borderWidth: 1,
-                  borderColor: 'rgba(255,255,255,0.02)'
-                }}>
-                  <Text style={{ color: text.tertiary, fontSize: 9, fontWeight: 'bold', textTransform: 'uppercase', marginBottom: 2 }}>{macro.label}</Text>
-                  <Text style={{ color: macro.color, fontSize: 13, fontWeight: 'bold' }}>{macro.val}</Text>
-                </View>
-              ))}
-            </View>
-
-            {/* Scanning CTA Trigger */}
-            <TouchableOpacity
-              style={{
-                backgroundColor: 'rgba(234, 179, 8, 0.15)',
-                borderWidth: 1,
-                borderColor: '#EAB308',
-                borderRadius: BorderRadius.md,
-                paddingVertical: 10,
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexDirection: 'row',
-                gap: 6
-              }}
-              onPress={() => {
-                setScannedMealResult(null);
-                setSelectedMealPreset('');
-                setCustomMealText('');
-                setShowMealModal(true);
-              }}
-            >
-              <Sparkles size={16} color="#EAB308" />
-              <Text style={{ color: '#EAB308', fontWeight: 'bold', fontSize: 13 }}>Scan Plate with Gemini AI</Text>
-            </TouchableOpacity>
-          </View>
-        </Animated.View>
-
-        {/* Continue Workout Banner */}
-        {isActive && (
-          <Animated.View entering={FadeInDown.delay(300).springify()}>
-            <TouchableOpacity 
-              style={styles.continueWorkout}
-              onPress={() => router.push('/workout-active')}
-              activeOpacity={0.85}
-            >
-              <LinearGradient
-                colors={[accent.red, accent.redDark]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={styles.continueGradient}
-              >
-                <View style={styles.continueContent}>
-                  <View>
-                    <Text style={styles.continueLabel}>WORKOUT IN PROGRESS</Text>
-                    <Text style={styles.continueTitle}>Resume Session</Text>
-                  </View>
-                  <View style={styles.continuePulse}>
-                    <Dumbbell size={24} color="#fff" />
-                  </View>
-                </View>
-              </LinearGradient>
-            </TouchableOpacity>
-          </Animated.View>
-        )}
-
-        {/* Start Workout Button */}
-        {!isActive && (
-          <Animated.View style={[animatedPulseStyle]} entering={FadeInDown.delay(300).springify()}>
-            <TouchableOpacity
-              style={styles.startButton}
-              onPress={handleStartWorkout}
-              activeOpacity={0.85}
-            >
-              <LinearGradient
-                colors={[accent.redLight, accent.red]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.startButtonGradient}
-              >
-                <PlusCircle size={32} color="#fff" />
-                <Text style={styles.startButtonText}>Start Empty Workout</Text>
-              </LinearGradient>
-            </TouchableOpacity>
-          </Animated.View>
-        )}
-
-        {/* Workout Templates */}
-        <Animated.View entering={FadeInDown.delay(400).springify()} style={styles.section}>
-          <Text style={styles.sectionTitle}>Routines</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.templateScroll}>
-            {templates.slice(0, 6).map((template) => (
-              <TouchableOpacity
-                key={template.id}
-                style={styles.templateCard}
-                onPress={() => handleStartTemplate(template)}
-                activeOpacity={0.8}
-              >
-                <LinearGradient
-                  colors={[colors.surfaceElevated, colors.surface]}
-                  style={styles.templateGradient}
-                >
-                  <View style={styles.templateIconWrapper}>
-                    <Target size={24} color={accent.red} />
-                  </View>
-                  <View>
-                    <Text style={styles.templateName} numberOfLines={1}>{template.name}</Text>
-                    <Text style={styles.templateExercises}>
-                      {template.exercises.length} exercises
-                    </Text>
-                  </View>
-                </LinearGradient>
-              </TouchableOpacity>
-            ))}
+              );
+            })}
           </ScrollView>
         </Animated.View>
 
+        {/* Nutrition */}
+        <Animated.View entering={FadeInDown.delay(340).springify()} style={styles.card}>
+          <View style={styles.cardHeader}>
+            <View style={styles.cardTitleRow}>
+              <Sparkles size={16} color={status.warning} />
+              <Text style={styles.cardTitle}>Today's nutrition</Text>
+            </View>
+            {dailyMacros.calories > 0 && (
+              <TouchableOpacity onPress={handleClearMacros} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Text style={{ color: text.tertiary, fontSize: 12, fontWeight: '700' }}>Reset</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <View style={styles.macroRow}>
+            {[
+              { label: 'kcal', val: dailyMacros.calories, color: text.primary },
+              { label: 'protein', val: `${dailyMacros.protein}g`, color: accent.red },
+              { label: 'carbs', val: `${dailyMacros.carbs}g`, color: status.success },
+              { label: 'fat', val: `${dailyMacros.fat}g`, color: status.warning },
+            ].map(macro => (
+              <View key={macro.label} style={styles.macro}>
+                <Text style={[styles.macroValue, { color: macro.color }]}>{macro.val}</Text>
+                <Text style={styles.macroLabel}>{macro.label}</Text>
+              </View>
+            ))}
+          </View>
+
+          <TouchableOpacity
+            style={styles.secondaryButton}
+            onPress={() => {
+              setScannedMealResult(null);
+              setSelectedMealPreset('');
+              setCustomMealText('');
+              setShowMealModal(true);
+            }}
+            activeOpacity={0.8}
+          >
+            <PlusCircle size={16} color={text.primary} />
+            <Text style={styles.secondaryButtonText}>Log a meal with AI</Text>
+          </TouchableOpacity>
+        </Animated.View>
+
         {/* AI Weekly Report Card */}
-        <Animated.View entering={FadeInDown.delay(450).springify()} style={{ marginHorizontal: Spacing.lg, marginBottom: Spacing.lg }}>
-          <View style={{
-            backgroundColor: colors.surfaceElevated,
-            borderRadius: BorderRadius.xl,
-            padding: Spacing.lg,
-            borderWidth: 1,
-            borderColor: weeklyReport ? accent.red : colors.border,
-            ...Shadows.md
-          }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.md }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <Sparkles size={18} color={accent.red} />
-                <Text style={{ color: text.primary, fontWeight: 'bold', fontSize: 14 }}>AI Weekly Report</Text>
+        <Animated.View entering={FadeInDown.delay(380).springify()}>
+          <View style={styles.card}>
+            <View style={styles.cardHeader}>
+              <View style={styles.cardTitleRow}>
+                <Sparkles size={16} color={accent.red} />
+                <Text style={styles.cardTitle}>Weekly coach report</Text>
               </View>
               {weeklyReport && (
-                <View style={{
-                  backgroundColor: accent.red,
-                  borderRadius: BorderRadius.full,
-                  paddingHorizontal: 12,
-                  paddingVertical: 4,
-                }}>
-                  <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>{weeklyReport.grade}</Text>
-                </View>
+                <LinearGradient colors={gradients.ember as any} style={styles.gradeBadge}>
+                  <Text style={styles.gradeText}>{weeklyReport.grade}</Text>
+                </LinearGradient>
               )}
             </View>
 
@@ -650,26 +537,26 @@ export default function HomeScreen() {
                 </TouchableOpacity>
               </View>
             ) : (
-              <TouchableOpacity
-                onPress={handleGenerateReport}
-                disabled={loadingReport}
-                style={{
-                  backgroundColor: accent.red,
-                  borderRadius: BorderRadius.lg,
-                  paddingVertical: 12,
-                  alignItems: 'center',
-                  opacity: loadingReport ? 0.7 : 1,
-                }}
-              >
-                {loadingReport ? (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <ActivityIndicator size="small" color="#fff" />
-                    <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 13 }}>Analyzing your training...</Text>
-                  </View>
-                ) : (
-                  <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 13 }}>Generate Weekly Report</Text>
-                )}
-              </TouchableOpacity>
+              <>
+                <Text style={styles.cardBody}>
+                  Get a grade, highlights and next steps based on this week's training.
+                </Text>
+                <TouchableOpacity
+                  onPress={handleGenerateReport}
+                  disabled={loadingReport}
+                  style={[styles.secondaryButton, loadingReport && { opacity: 0.7 }]}
+                  activeOpacity={0.8}
+                >
+                  {loadingReport ? (
+                    <>
+                      <ActivityIndicator size="small" color={text.primary} />
+                      <Text style={styles.secondaryButtonText}>Analyzing your training…</Text>
+                    </>
+                  ) : (
+                    <Text style={styles.secondaryButtonText}>Generate report</Text>
+                  )}
+                </TouchableOpacity>
+              </>
             )}
           </View>
         </Animated.View>
@@ -677,12 +564,7 @@ export default function HomeScreen() {
         {/* Recent PRs */}
         {recentPRs.length > 0 && (
           <Animated.View entering={FadeInDown.delay(500).springify()} style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Recent Achievements</Text>
-              <TouchableOpacity onPress={() => router.push('/(tabs)/analytics')}>
-                <Text style={styles.seeAll}>View All</Text>
-              </TouchableOpacity>
-            </View>
+            <SectionHeader title="Recent PRs" actionLabel="Analytics" onAction={() => router.push('/(tabs)/analytics')} />
             {recentPRs.slice(0, 3).map((pr, idx) => (
               <View key={pr.id || idx} style={styles.prCard}>
                 <View style={styles.prIcon}>
@@ -691,18 +573,16 @@ export default function HomeScreen() {
                    <Flame size={20} color={accent.red} />}
                 </View>
                 <View style={styles.prInfo}>
-                  <Text style={styles.prExercise}>{pr.exercise_name}</Text>
-                  <Text style={styles.prValue}>
-                    {pr.record_type === '1rm' ? `${displayWeight(pr.value)} est. 1RM` :
-                     pr.record_type === 'volume' ? `${displayWeight(pr.value)} volume` :
-                     `${pr.value} reps`}
+                  <Text style={styles.prExercise} numberOfLines={1}>{pr.exercise_name}</Text>
+                  <Text style={styles.prType}>
+                    {pr.record_type === '1rm' ? 'Estimated 1RM' : pr.record_type === 'volume' ? 'Session volume' : 'Rep record'}
+                    {pr.improvement_pct ? <Text style={{ color: status.success }}>{`  +${pr.improvement_pct}%`}</Text> : null}
                   </Text>
                 </View>
-                {pr.improvement_pct && (
-                  <View style={styles.prBadge}>
-                    <Text style={styles.prBadgeText}>+{pr.improvement_pct}%</Text>
-                  </View>
-                )}
+                <Text style={styles.prValue}>
+                  {pr.record_type === 'reps' ? `${pr.value}` : toDisplayWeight(pr.value).toFixed(pr.record_type === '1rm' ? 1 : 0)}
+                  <Text style={styles.prUnit}> {pr.record_type === 'reps' ? 'reps' : unit}</Text>
+                </Text>
               </View>
             ))}
           </Animated.View>
@@ -715,7 +595,7 @@ export default function HomeScreen() {
             <Text style={styles.emptyTitle}>Ready to Train?</Text>
             <Text style={styles.emptyText}>
               Your fitness journey begins with a single rep.{'\n'}
-              Tap "Start Empty Workout" above to log your first session!
+              Tap "Start workout" above to log your first session.
             </Text>
           </View>
         )}
@@ -1032,7 +912,7 @@ export default function HomeScreen() {
   );
 }
 
-const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any) => StyleSheet.create({
+const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any, isDark: boolean) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
@@ -1044,299 +924,441 @@ const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any
     paddingHorizontal: Spacing.lg,
     paddingTop: 60,
   },
+
+  // Header
   header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: Spacing.lg,
+    marginBottom: Spacing.xl,
+    gap: Spacing.md,
+  },
+  dateEyebrow: {
+    color: text.tertiary,
+    fontFamily: Fonts.displayMedium,
+    fontSize: 14,
+    letterSpacing: 1.4,
+    textTransform: 'uppercase',
   },
   greeting: {
-    color: text.secondary,
-    fontSize: FontSize.md,
-    fontWeight: FontWeight.medium,
-  },
-  userName: {
     color: text.primary,
-    fontSize: FontSize['3xl'],
-    fontWeight: FontWeight.extrabold,
-    marginTop: 2,
-    letterSpacing: -0.5,
-  },
-  profileButton: {
-    borderRadius: BorderRadius.full,
-    overflow: 'hidden',
-  },
-  profileGradient: {
-    width: 44,
-    height: 44,
-    borderRadius: BorderRadius.full,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-
-  // Hero Dashboard
-  heroDashboard: {
-    marginBottom: Spacing['2xl'],
-    borderRadius: BorderRadius.xl,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: colors.border,
-    ...Shadows.md,
-  },
-  heroGradient: {
-    padding: Spacing.lg,
-  },
-  heroTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: Spacing.xl,
-  },
-  heroStatItem: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.sm,
-  },
-  heroStatTextContainer: {
-    flex: 1,
-  },
-  heroStatValue: {
-    color: text.primary,
-    fontSize: FontSize.lg,
-    fontWeight: FontWeight.bold,
-  },
-  heroStatLabel: {
-    color: text.tertiary,
-    fontSize: FontSize.xs,
-    fontWeight: FontWeight.medium,
+    fontFamily: Fonts.displayHeavy,
+    fontSize: 34,
+    lineHeight: 38,
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
   },
-  heroDivider: {
-    width: 1,
-    height: '100%',
-    backgroundColor: colors.border,
-    marginHorizontal: Spacing.md,
+  avatarButton: {
+    position: 'relative',
   },
-  heroProgressSection: {
-    marginTop: Spacing.xs,
-  },
-  heroProgressHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: Spacing.sm,
-  },
-  heroProgressTitle: {
-    color: text.secondary,
-    fontSize: FontSize.sm,
-    fontWeight: FontWeight.medium,
-  },
-  heroProgressAmount: {
-    color: text.primary,
-    fontSize: FontSize.sm,
-    fontWeight: FontWeight.bold,
-  },
-  heroProgressBarContainer: {
-    height: 6,
-    backgroundColor: colors.surfaceHighlight,
-    borderRadius: 3,
-    overflow: 'hidden',
-  },
-  heroProgressBarFill: {
-    height: '100%',
-    backgroundColor: accent.red,
-    borderRadius: 3,
-  },
-
-  // Continue workout banner
-  continueWorkout: {
-    marginBottom: Spacing['2xl'],
-    borderRadius: BorderRadius.xl,
-    overflow: 'hidden',
-    ...Shadows.glow(accent.red),
-  },
-  continueGradient: {
-    padding: Spacing.lg,
-    borderRadius: BorderRadius.xl,
-  },
-  continueContent: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  continueLabel: {
-    color: 'rgba(255,255,255,0.7)',
-    fontSize: FontSize.xs,
-    fontWeight: FontWeight.bold,
-    letterSpacing: 1,
-  },
-  continueTitle: {
-    color: '#fff',
-    fontSize: FontSize.xl,
-    fontWeight: FontWeight.bold,
-    marginTop: 4,
-  },
-  continuePulse: {
+  avatar: {
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: 'rgba(255,255,255,0.2)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-
-  // Start workout button
-  startButton: {
-    marginBottom: Spacing['2xl'],
-    borderRadius: BorderRadius.xl,
-    overflow: 'hidden',
-    ...Shadows.lg,
-  },
-  startButtonGradient: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.sm,
-    paddingVertical: Spacing.lg,
-    paddingHorizontal: Spacing.xl,
-    borderRadius: BorderRadius.xl,
-  },
-  startButtonText: {
+  avatarText: {
     color: '#fff',
-    fontSize: FontSize.xl,
-    fontWeight: FontWeight.extrabold,
+    fontFamily: Fonts.displayHeavy,
+    fontSize: 24,
+  },
+  levelBadge: {
+    position: 'absolute',
+    right: -4,
+    bottom: -4,
+    minWidth: 22,
+    height: 22,
+    paddingHorizontal: 5,
+    borderRadius: 11,
+    backgroundColor: colors.background,
+    borderWidth: 2,
+    borderColor: colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  levelBadgeText: {
+    color: text.primary,
+    fontFamily: Fonts.displayHeavy,
+    fontSize: 13,
+    lineHeight: 15,
   },
 
-  // Templates
-  section: {
-    marginBottom: Spacing['2xl'],
+  // Hero
+  hero: {
+    borderRadius: BorderRadius['2xl'],
+    padding: Spacing.xl,
+    borderWidth: 1,
+    borderColor: isDark ? 'rgba(255,122,61,0.18)' : 'rgba(255,77,61,0.16)',
+    marginBottom: Spacing.md,
   },
-  sectionHeader: {
+  heroRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: Spacing.md,
+    gap: Spacing.lg,
   },
-  sectionTitle: {
-    color: text.primary,
-    fontSize: FontSize.xl,
-    fontWeight: FontWeight.extrabold,
-    letterSpacing: -0.5,
-    marginBottom: Spacing.md,
+  heroEyebrowRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
-  seeAll: {
+  heroEyebrow: {
     color: text.secondary,
-    fontSize: FontSize.sm,
-    fontWeight: FontWeight.semibold,
-    marginBottom: Spacing.md,
+    fontFamily: Fonts.displayMedium,
+    fontSize: 14,
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
   },
-  templateScroll: {
-    marginHorizontal: -Spacing.lg,
-    paddingHorizontal: Spacing.lg,
+  heroNumber: {
+    color: text.primary,
+    fontFamily: Fonts.displayHeavy,
+    fontSize: 76,
+    lineHeight: 80,
+    marginTop: 2,
   },
-  templateCard: {
-    width: 140,
-    marginRight: Spacing.md,
+  heroNumberUnit: {
+    color: text.secondary,
+    fontFamily: Fonts.display,
+    fontSize: 22,
+    marginBottom: 12,
+    textTransform: 'uppercase',
+  },
+  heroCaption: {
+    color: text.tertiary,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  ringValue: {
+    color: text.primary,
+    fontFamily: Fonts.displayHeavy,
+    fontSize: 30,
+    lineHeight: 32,
+  },
+  ringTotal: {
+    color: text.tertiary,
+    fontSize: 20,
+  },
+  ringLabel: {
+    color: text.tertiary,
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+  },
+  heroStats: {
+    flexDirection: 'row',
+    marginTop: Spacing.xl,
+    paddingTop: Spacing.lg,
+    borderTopWidth: 1,
+    borderTopColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(10,10,12,0.08)',
+  },
+  heroStat: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  heroStatDivider: {
+    width: 1,
+    backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(10,10,12,0.08)',
+  },
+  heroStatValue: {
+    color: text.primary,
+    fontFamily: Fonts.displayHeavy,
+    fontSize: 24,
+    lineHeight: 26,
+  },
+  heroStatLabel: {
+    color: text.tertiary,
+    fontSize: 10.5,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    marginTop: 2,
+  },
+
+  // Generic card
+  card: {
+    backgroundColor: colors.surfaceElevated,
     borderRadius: BorderRadius.xl,
-    overflow: 'hidden',
+    padding: Spacing.lg,
     borderWidth: 1,
     borderColor: colors.border,
-    ...Shadows.sm,
+    marginBottom: Spacing.md,
   },
-  templateGradient: {
-    padding: Spacing.lg,
-    minHeight: 120,
+  cardHeader: {
+    flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.md,
   },
-  templateIconWrapper: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.surfaceHighlight,
+  cardTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  cardTitle: {
+    color: text.primary,
+    fontFamily: Fonts.display,
+    fontSize: 18,
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
+  cardBody: {
+    color: text.secondary,
+    fontSize: 13,
+    lineHeight: 19,
+    marginBottom: Spacing.md,
+  },
+  secondaryButton: {
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: Spacing.sm,
+    gap: 8,
+    height: 44,
+    borderRadius: BorderRadius.md,
+    backgroundColor: colors.surfaceHighlight,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+  },
+  secondaryButtonText: {
+    color: text.primary,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  gradeBadge: {
+    minWidth: 40,
+    height: 30,
+    paddingHorizontal: 10,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  gradeText: {
+    color: '#fff',
+    fontFamily: Fonts.displayHeavy,
+    fontSize: 18,
+  },
+
+  // Week strip
+  weekRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  weekDay: {
+    alignItems: 'center',
+    gap: 8,
+  },
+  weekLabel: {
+    color: text.tertiary,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  weekDot: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  weekDotEmpty: {
+    backgroundColor: colors.surfaceHighlight,
+  },
+  weekDotToday: {
+    backgroundColor: 'transparent',
+    borderWidth: 2,
+    borderColor: accent.red,
+  },
+  weekDate: {
+    color: text.secondary,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+
+  // CTA
+  ctaShadow: {
+    borderRadius: BorderRadius.xl,
+    marginTop: Spacing.xs,
+    marginBottom: Spacing.xl,
+    shadowColor: accent.red,
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.35,
+    shadowRadius: 18,
+    elevation: 8,
+  },
+  cta: {
+    height: 76,
+    borderRadius: BorderRadius.xl,
+    paddingHorizontal: Spacing.xl,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  ctaEyebrow: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  ctaTitle: {
+    color: '#fff',
+    fontFamily: Fonts.displayHeavy,
+    fontSize: 28,
+    lineHeight: 32,
+    textTransform: 'uppercase',
+  },
+  ctaIcon: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingLeft: 2,
+  },
+
+  // Sections
+  section: {
+    marginBottom: Spacing.lg,
+  },
+
+  // Routines
+  templateScroll: {
+    marginHorizontal: -Spacing.lg,
+    paddingLeft: Spacing.lg,
+  },
+  templateCard: {
+    width: 168,
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: BorderRadius.xl,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: Spacing.lg,
+    overflow: 'hidden',
+  },
+  templateAccent: {
+    width: 28,
+    height: 4,
+    borderRadius: 2,
+    marginBottom: Spacing.md,
   },
   templateName: {
     color: text.primary,
-    fontSize: FontSize.md,
-    fontWeight: FontWeight.bold,
+    fontFamily: Fonts.display,
+    fontSize: 22,
+    lineHeight: 24,
+    textTransform: 'uppercase',
   },
-  templateExercises: {
+  templateMeta: {
     color: text.tertiary,
-    fontSize: FontSize.xs,
+    fontSize: 12,
+    fontWeight: '600',
     marginTop: 4,
   },
+  templateFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: Spacing.lg,
+  },
+  templateCount: {
+    color: text.secondary,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  templatePlay: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingLeft: 1,
+  },
 
-  // PR cards
+  // Nutrition
+  macroRow: {
+    flexDirection: 'row',
+    marginBottom: Spacing.lg,
+  },
+  macro: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  macroValue: {
+    fontFamily: Fonts.displayHeavy,
+    fontSize: 24,
+    lineHeight: 26,
+  },
+  macroLabel: {
+    color: text.tertiary,
+    fontSize: 10.5,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginTop: 2,
+  },
+
+  // PRs
   prCard: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: colors.surfaceElevated,
-    borderRadius: BorderRadius.xl,
-    padding: Spacing.lg,
+    borderRadius: BorderRadius.lg,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.lg,
     marginBottom: Spacing.sm,
     borderWidth: 1,
     borderColor: colors.border,
+    gap: Spacing.md,
   },
   prIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 38,
+    height: 38,
+    borderRadius: 12,
     backgroundColor: colors.surfaceHighlight,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: Spacing.md,
   },
   prInfo: {
     flex: 1,
   },
   prExercise: {
     color: text.primary,
-    fontSize: FontSize.md,
-    fontWeight: FontWeight.bold,
+    fontSize: 15,
+    fontWeight: '700',
   },
-  prValue: {
-    color: text.secondary,
-    fontSize: FontSize.sm,
+  prType: {
+    color: text.tertiary,
+    fontSize: 12,
+    fontWeight: '600',
     marginTop: 2,
   },
-  prBadge: {
-    backgroundColor: 'rgba(34, 197, 94, 0.1)',
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: 4,
-    borderRadius: BorderRadius.md,
+  prValue: {
+    color: text.primary,
+    fontFamily: Fonts.displayHeavy,
+    fontSize: 24,
   },
-  prBadgeText: {
-    color: status.success,
-    fontSize: FontSize.xs,
-    fontWeight: FontWeight.bold,
+  prUnit: {
+    color: text.tertiary,
+    fontFamily: Fonts.display,
+    fontSize: 14,
   },
 
   // Empty state
   emptyState: {
     alignItems: 'center',
-    paddingVertical: Spacing['4xl'],
-    backgroundColor: colors.surface,
-    borderRadius: BorderRadius.xl,
-    borderWidth: 1,
-    borderColor: colors.border,
-    marginTop: Spacing.md,
+    paddingVertical: Spacing['3xl'],
+    paddingHorizontal: Spacing.xl,
   },
   emptyTitle: {
     color: text.primary,
-    fontSize: FontSize.xl,
-    fontWeight: FontWeight.bold,
+    fontFamily: Fonts.displayHeavy,
+    fontSize: 28,
+    textTransform: 'uppercase',
     marginBottom: Spacing.sm,
   },
   emptyText: {
     color: text.secondary,
-    fontSize: FontSize.sm,
+    fontSize: 14,
     textAlign: 'center',
-    lineHeight: 22,
-    paddingHorizontal: Spacing.xl,
+    lineHeight: 21,
   },
 });

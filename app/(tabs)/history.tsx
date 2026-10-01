@@ -19,7 +19,7 @@ import {
 } from 'lucide-react-native';
 import { useFocusEffect } from 'expo-router';
 import Animated, { FadeInDown, Layout } from 'react-native-reanimated';
-import { useThemeColor, Spacing, BorderRadius, FontSize, FontWeight, Shadows } from '../../lib/theme';
+import { useThemeColor, Spacing, BorderRadius, FontSize, FontWeight, Shadows, Fonts } from '../../lib/theme';
 import { getWorkouts, getWorkoutDatesForMonth, Workout, deleteWorkout } from '../../lib/storage';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { displayWeight } from '../../lib/units';
@@ -76,7 +76,8 @@ export default function HistoryScreen() {
 
   // Calendar helpers
   const daysInMonth = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 0).getDate();
-  const firstDayOfWeek = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1).getDay();
+  // Monday-first, matching the Home week strip
+  const firstDayOfWeek = (new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1).getDay() + 6) % 7;
   const monthName = calendarMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
   const prevMonth = () => {
@@ -143,7 +144,7 @@ export default function HistoryScreen() {
           </View>
 
           <View style={styles.calendarDays}>
-            {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, i) => (
+            {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((day, i) => (
               <Text key={i} style={styles.calendarDayLabel}>{day}</Text>
             ))}
           </View>
@@ -165,7 +166,7 @@ export default function HistoryScreen() {
                     style={[
                       styles.calendarDayCircle,
                       hasWorkout && styles.calendarDayActive,
-                      today && styles.calendarDayToday,
+                      today && !hasWorkout && styles.calendarDayToday,
                     ]}
                   >
                     <Text
@@ -185,11 +186,11 @@ export default function HistoryScreen() {
 
           <View style={styles.calendarLegend}>
             <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: status.success }]} />
+              <View style={[styles.legendDot, { backgroundColor: accent.red }]} />
               <Text style={styles.legendText}>Workout Day</Text>
             </View>
             <Text style={styles.legendCount}>
-              {workoutDates.length} workouts
+              {workoutDates.length} {workoutDates.length === 1 ? 'workout' : 'workouts'}
             </Text>
           </View>
         </Animated.View>
@@ -370,10 +371,12 @@ const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any
   },
   title: {
     color: text.primary,
-    fontSize: FontSize['3xl'],
-    fontWeight: FontWeight.extrabold,
     marginBottom: Spacing['2xl'],
-    letterSpacing: -0.5,
+    fontFamily: Fonts.displayHeavy,
+    fontSize: 40,
+    lineHeight: 44,
+    textTransform: 'uppercase',
+    letterSpacing: 0.2,
   },
 
   // Calendar
@@ -432,8 +435,7 @@ const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any
     justifyContent: 'center',
   },
   calendarDayActive: {
-    backgroundColor: status.success,
-    ...Shadows.glow(status.success),
+    backgroundColor: accent.red,
   },
   calendarDayToday: {
     borderWidth: 2,
@@ -445,7 +447,7 @@ const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any
     fontWeight: FontWeight.medium,
   },
   calendarDayTextActive: {
-    color: colors.background,
+    color: '#fff',
     fontWeight: FontWeight.extrabold,
   },
   calendarDayTextToday: {
@@ -485,11 +487,11 @@ const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any
   // Section
   sectionTitle: {
     color: text.secondary,
-    fontSize: FontSize.sm,
-    fontWeight: FontWeight.bold,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
     marginBottom: Spacing.md,
+    fontFamily: Fonts.display,
+    fontSize: 18,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
   },
 
   // Workout card
@@ -533,8 +535,10 @@ const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any
   },
   workoutName: {
     color: text.primary,
-    fontSize: FontSize.md,
-    fontWeight: FontWeight.bold,
+    fontFamily: Fonts.display,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+    fontSize: 20,
   },
   workoutMeta: {
     flexDirection: 'row',

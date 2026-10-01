@@ -22,7 +22,7 @@ import {
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from 'expo-router';
 import Animated, { FadeInDown } from 'react-native-reanimated';
-import { useThemeColor, Spacing, BorderRadius, FontSize, FontWeight, Shadows } from '../../lib/theme';
+import { useThemeColor, Spacing, BorderRadius, FontSize, FontWeight, Shadows, Fonts } from '../../lib/theme';
 import { useAuthStore } from '../../stores/authStore';
 import { getWorkoutStats, getProgressEntries, saveProgressEntry, ProgressEntry, canSeedDemoData, getWorkouts } from '../../lib/storage';
 import { toLocalDateStr } from '../../lib/date';
@@ -33,7 +33,7 @@ import { useSettingsStore, PAYWALL_ENABLED } from '../../stores/settingsStore';
 import { displayWeight, parseInputToKg, toDisplayWeight, fromDisplayWeight, displayVolume } from '../../lib/units';
 
 export default function ProfileScreen() {
-  const { colors, text, accent, status, muscle, isDark } = useThemeColor();
+  const { colors, text, accent, status, muscle, isDark, gradients } = useThemeColor();
   const styles = React.useMemo(() => getStyles(colors, text, accent, status, muscle, isDark), [colors, text, accent, status, muscle, isDark]);
 
   const router = useRouter();
@@ -229,11 +229,11 @@ export default function ProfileScreen() {
             colors={[colors.surfaceElevated, colors.surface]}
             style={styles.profileGradient}
           >
-            <View style={styles.avatar}>
+            <LinearGradient colors={gradients.ember as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.avatar}>
               <Text style={styles.avatarText}>
                 {(user?.name || 'U').charAt(0).toUpperCase()}
               </Text>
-            </View>
+            </LinearGradient>
             <View style={styles.profileInfo}>
               <View style={styles.profileNameRow}>
                 <Text style={styles.profileName}>{user?.name || 'Lifter'}</Text>
@@ -257,7 +257,12 @@ export default function ProfileScreen() {
                 return (
                   <View style={styles.xpContainer}>
                     <View style={styles.xpBarBg}>
-                      <View style={[styles.xpBarFill, { width: `${percent}%` }]} />
+                      <LinearGradient
+                        colors={gradients.ember as any}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 0 }}
+                        style={[styles.xpBarFill, { width: `${percent}%` }]}
+                      />
                     </View>
                     <Text style={styles.xpText}>{user.xp || 0} / {nextLevelXP} XP</Text>
                   </View>
@@ -706,10 +711,12 @@ const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any
   },
   title: {
     color: text.primary,
-    fontSize: FontSize['3xl'],
-    fontWeight: FontWeight.extrabold,
     marginBottom: Spacing['2xl'],
-    letterSpacing: -0.5,
+    fontFamily: Fonts.displayHeavy,
+    fontSize: 40,
+    lineHeight: 44,
+    textTransform: 'uppercase',
+    letterSpacing: 0.2,
   },
 
   // Profile card
@@ -736,8 +743,8 @@ const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any
   },
   avatarText: {
     color: '#fff',
-    fontSize: FontSize['3xl'],
-    fontWeight: FontWeight.extrabold,
+    fontFamily: Fonts.displayHeavy,
+    fontSize: 36,
   },
   profileInfo: {
     flex: 1,
@@ -750,8 +757,10 @@ const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any
   },
   profileName: {
     color: text.primary,
-    fontSize: FontSize.xl,
-    fontWeight: FontWeight.bold,
+    fontFamily: Fonts.display,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+    fontSize: 28,
   },
   levelBadge: {
     backgroundColor: accent.red,
@@ -788,7 +797,6 @@ const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any
   },
   xpBarFill: {
     height: '100%',
-    backgroundColor: status.warning,
     borderRadius: 3,
   },
   xpText: {
@@ -827,8 +835,8 @@ const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any
   },
   quickStatValue: {
     color: text.primary,
-    fontSize: FontSize['2xl'],
-    fontWeight: FontWeight.extrabold,
+    fontFamily: Fonts.displayHeavy,
+    fontSize: 30,
   },
   quickStatLabel: {
     color: text.tertiary,
@@ -881,11 +889,11 @@ const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any
   },
   sectionTitle: {
     color: text.secondary,
-    fontSize: FontSize.sm,
-    fontWeight: FontWeight.bold,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
     marginBottom: Spacing.md,
+    fontFamily: Fonts.display,
+    fontSize: 18,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
   },
 
   // Weight tracking
@@ -949,9 +957,9 @@ const getStyles = (colors: any, text: any, accent: any, status: any, muscle: any
   weightValue: {
     color: text.primary,
     fontSize: FontSize.sm,
-    fontWeight: FontWeight.bold,
     width: 45,
     textAlign: 'right',
+    fontFamily: Fonts.displayHeavy,
   },
   emptyWeight: {
     backgroundColor: colors.surfaceElevated,
